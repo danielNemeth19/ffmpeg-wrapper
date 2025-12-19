@@ -37,7 +37,7 @@ def _trim_index_if_exists(stem: str) -> str:
     try:
         int(suffix)
     except ValueError:
-        __logger__.info(f"suffix {suffix} is not int for {stem}")
+        __logger__.info("suffix %s is not int for %s", suffix, stem)
         return stem
     return stem[:-3]
 
@@ -66,44 +66,41 @@ def extract_audio_bitrate(filename: str):
     try:
         raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
         bitrate = raw_bit_rate.stdout.strip()
-        __logger__.info(f"Got bitrate as {bitrate}")
+        __logger__.info("Got bitrate as %s", bitrate)
     except subprocess.CalledProcessError as exc:
-        __logger__.error(f"Error extracting bitrate from {filename}: {exc.stderr}")
+        __logger__.error("Error extracting bitrate from %s: %s", filename, exc.stderr)
         raise
     return bitrate
 
 
-def convert(file_map: dict[str, FileInfo], newdB: str, pattern: str, dry_run: bool):
-    # audio_bitrate = None
-    # for index, item in enumerate(Path(sp).glob(f"*{pattern}*.mp4")):
-        # if not audio_bitrate:
-            # audio_bitrate = extract_audio_bitrate(item.as_posix())
-        # new_file_name = get_new_file_name(item.name, index=index)
-    for video, video_data in file_map.item():
-        if  not video_data["audio_bitrate"]:
-            video_data["audio_bitrate"] = extract_audio_bitrate(item.as_posix())
-
-        command = [
-            "ffmpeg",
-            "-i",
-            item.name,
-            "-c:v",
-            "copy",
-            "-af",
-            f"volume={newdB}dB",
-            "-c:a",
-            "aac",
-            "-b:a",
-            audio_bitrate,
-            new_file_name
-        ]
-        __logger__.debug(command)
-        if not dry_run:
-            try:
-                subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except subprocess.CalledProcessError as exc:
-                __logger__.error(f"Error converting {item.name}- {exc.stderr}")
-            __logger__.info(f"{item.name} -> {new_file_name} converted")
+def convert(file_map: dict[str, FileInfo], newdB: str, dry_run: bool):
+    for video, video_data in file_map.items():
+        __logger__.info("Processing: %s", video)
+        for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
+            if not video_data["audio_bitrate"]:
+                __logger__.info("Getting audio bit_rate for: %s -- %s", video, input_file)
+                video_data["audio_bitrate"] = extract_audio_bitrate(input_file)
+            command = [
+                "ffmpeg",
+                "-i",
+                input_file,
+                "-c:v",
+                "copy",
+                "-af",
+                f"volume={newdB}dB",
+                "-c:a",
+                "aac",
+                "-b:a",
+                video_data["audio_bitrate"],
+                new_file
+            ]
+            __logger__.info(command)
+            if not dry_run:
+                try:
+                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except subprocess.CalledProcessError as exc:
+                    __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+                __logger__.info("%s -> %s converted", input_file, new_file)
 
 
 def collect(folder: str, pattern: str) -> dict[str, FileInfo]:
@@ -152,6 +149,7 @@ if __name__ == '__main__':
     source_path = envs.get("SOURCE", None)
     if not source_path:
         __logger__.error("Source path needs to be defined")
+        raise
     run_args = get_args()
     fm = collect(folder=source_path, pattern=run_args.pattern)
-    convert(file_map=fm, newdB=run_args.dB, pattern=run_args.pattern, dry_run=run_args.dry_run)
+    convert(file_map=fm, newdB=run_args.dB, dry_run=run_args.dry_run)
