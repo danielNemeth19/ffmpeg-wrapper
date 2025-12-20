@@ -1,3 +1,4 @@
+import sys
 import argparse
 import logging
 import subprocess
@@ -37,7 +38,7 @@ def _trim_index_if_exists(stem: str) -> str:
     try:
         int(suffix)
     except ValueError:
-        __logger__.info("suffix %s is not int for %s", suffix, stem)
+        __logger__.debug("suffix %s is not int for %s", suffix, stem)
         return stem
     return stem[:-3]
 
@@ -50,7 +51,7 @@ def get_new_file_name(filename: str, index: int) -> str:
     return new_fn.name
 
 
-def extract_audio_bitrate(filename: str):
+def extract_audio_bitrate(filename: str) -> str:
     command = [
         "ffprobe",
         "-v",
@@ -66,7 +67,6 @@ def extract_audio_bitrate(filename: str):
     try:
         raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
         bitrate = raw_bit_rate.stdout.strip()
-        __logger__.info("Got bitrate as %s", bitrate)
     except subprocess.CalledProcessError as exc:
         __logger__.error("Error extracting bitrate from %s: %s", filename, exc.stderr)
         raise
@@ -78,10 +78,12 @@ def convert(file_map: dict[str, FileInfo], newdB: str, dry_run: bool):
         __logger__.info("Processing: %s", video)
         for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
             if not video_data["audio_bitrate"]:
-                __logger__.info("Getting audio bit_rate for: %s -- %s", video, input_file)
-                video_data["audio_bitrate"] = extract_audio_bitrate(input_file)
+                bitrate = extract_audio_bitrate(input_file)
+                video_data["audio_bitrate"] = bitrate
+                __logger__.info("Got audio bit_rate for: %s -- %s", input_file, bitrate)
             command = [
                 "ffmpeg",
+                "-y",
                 "-i",
                 input_file,
                 "-c:v",
@@ -94,37 +96,39 @@ def convert(file_map: dict[str, FileInfo], newdB: str, dry_run: bool):
                 video_data["audio_bitrate"],
                 new_file
             ]
-            __logger__.info(command)
+            __logger__.debug(command)
             if not dry_run:
                 try:
-                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                    __logger__.info("%s -> %s converted", input_file, new_file)
                 except subprocess.CalledProcessError as exc:
                     __logger__.error("Error converting %s: %s", input_file, exc.stderr)
-                __logger__.info("%s -> %s converted", input_file, new_file)
 
 
-def collect(folder: str, pattern: str) -> dict[str, FileInfo]:
+def collect(source: str, target: str, pattern: str) -> dict[str, FileInfo]:
     file_map: dict[str, FileInfo] = {}
-    for item in Path(folder).glob(f"*{pattern}*.mp4"):
+    for item in Path(source).glob(f"*{pattern}*.mp4"):
+        original_fn = Path(source, item.name).as_posix()
         stem = sanitize_file_name(item.name)
+        new_fn_base = Path(target, stem)
         if stem not in file_map:
             count = 1
             file_map[stem] = {
                 'count': count,
                 'audio_bitrate': None,
-                'original_files': [item.name],
-                'new_files': [Path(f"{stem}-{str(count)}").with_suffix(".mp4").as_posix()]
+                'original_files': [original_fn],
+                'new_files': [Path(f"{new_fn_base}-{str(count)}").with_suffix(".mp4").as_posix()]
             }
         elif stem in file_map:
             count = file_map[stem].get("count") + 1
             file_map[stem]["count"] = count
-            file_map[stem]['original_files'].append(item.name)
-            new_file = Path(f'{stem}-{str(count)}').with_suffix(".mp4").as_posix()
+            file_map[stem]['original_files'].append(original_fn)
+            new_file = Path(f'{new_fn_base}-{str(count)}').with_suffix(".mp4").as_posix()
             file_map[stem]['new_files'].append(new_file)
     return file_map
 
 
-def get_args():
+def get_args() -> argparse.Namespace:
     """
     Getting the args
     """
@@ -144,12 +148,25 @@ def get_args():
     return args
 
 
+def _validate_paths(sp: str, tp: str) -> bool:
+    if not sp or not tp:
+        __logger__.error("Source and target needs to be defined, got %s and %s", sp, tp)
+        return False
+    if not Path(sp).exists():
+        __logger__.error("Source folder %s doesn't exists, quiting...", sp)
+        return False
+    if not Path(tp).exists():
+        __logger__.info("Target folder %s doesn't exists...creating", sp)
+        Path(tp).mkdir()
+    return True
+
+
 if __name__ == '__main__':
     envs = dotenv_values()
     source_path = envs.get("SOURCE", None)
-    if not source_path:
-        __logger__.error("Source path needs to be defined")
-        raise
+    target_path = envs.get("TARGET", None)
+    if not _validate_paths(sp=source_path, tp=target_path):
+        sys.exit()
     run_args = get_args()
-    fm = collect(folder=source_path, pattern=run_args.pattern)
+    fm = collect(source=source_path, target=target_path, pattern=run_args.pattern)
     convert(file_map=fm, newdB=run_args.dB, dry_run=run_args.dry_run)
