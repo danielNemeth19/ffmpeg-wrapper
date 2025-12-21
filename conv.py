@@ -17,6 +17,7 @@ class FileInfo(TypedDict):
     audio_bitrate: str | None
     original_files: list[str]
     new_files: list[str]
+    decibel_bump: str
 
 
 def sanitize_file_name(filename: str) -> str:
@@ -43,12 +44,8 @@ def _trim_index_if_exists(stem: str) -> str:
     return stem[:-3]
 
 
-def get_new_file_name(filename: str, index: int) -> str:
-    parts = filename.split('-')
-    path_parts = _get_new_path_parts(parts)
-    new_stem = path_parts.removesuffix(".mp4").removesuffix(" .mp4")
-    new_fn = Path(f"{new_stem}-{index}").with_suffix(".mp4")
-    return new_fn.name
+def get_new_file_name(filename_base: Path, decibel_value: str, index: int) -> str:
+    return Path(f"{filename_base}-dB{decibel_value}-{index:03d}").with_suffix(".mp4").as_posix()
 
 
 def extract_audio_bitrate(filename: str) -> str:
@@ -73,7 +70,7 @@ def extract_audio_bitrate(filename: str) -> str:
     return bitrate
 
 
-def convert(file_map: dict[str, FileInfo], newdB: str, dry_run: bool):
+def convert(file_map: dict[str, FileInfo], dry_run: bool):
     for video, video_data in file_map.items():
         __logger__.info("Processing: %s", video)
         for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
@@ -89,7 +86,7 @@ def convert(file_map: dict[str, FileInfo], newdB: str, dry_run: bool):
                 "-c:v",
                 "copy",
                 "-af",
-                f"volume={newdB}dB",
+                f"volume={video_data['decibel_bump']}dB",
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -105,7 +102,7 @@ def convert(file_map: dict[str, FileInfo], newdB: str, dry_run: bool):
                     __logger__.error("Error converting %s: %s", input_file, exc.stderr)
 
 
-def collect(source: str, target: str, pattern: str) -> dict[str, FileInfo]:
+def create_file_map(source: str, target: str, pattern: str, decibel: str) -> dict[str, FileInfo]:
     file_map: dict[str, FileInfo] = {}
     for item in Path(source).glob(f"*{pattern}*.mp4"):
         original_fn = Path(source, item.name).as_posix()
@@ -117,21 +114,23 @@ def collect(source: str, target: str, pattern: str) -> dict[str, FileInfo]:
                 'count': count,
                 'audio_bitrate': None,
                 'original_files': [original_fn],
-                'new_files': [Path(f"{new_fn_base}-{str(count)}").with_suffix(".mp4").as_posix()]
+                'new_files': [
+                    get_new_file_name(filename_base=new_fn_base, decibel_value=decibel, index=count)
+                ],
+                'decibel_bump': decibel
             }
         elif stem in file_map:
             count = file_map[stem].get("count") + 1
             file_map[stem]["count"] = count
             file_map[stem]['original_files'].append(original_fn)
-            new_file = Path(f'{new_fn_base}-{str(count)}').with_suffix(".mp4").as_posix()
+            new_file = get_new_file_name(
+                filename_base=new_fn_base, decibel_value=decibel, index=count
+            )
             file_map[stem]['new_files'].append(new_file)
     return file_map
 
 
-def get_args() -> argparse.Namespace:
-    """
-    Getting the args
-    """
+def get_args() -> tuple[str, str, bool]:
     parser = argparse.ArgumentParser(
         description="Batch adjust audio volume and re-encode MP4 files."
     )
@@ -145,7 +144,7 @@ def get_args() -> argparse.Namespace:
         "--dry-run", action="store_true", help="Print ffmpeg commands without executing them."
     )
     args = parser.parse_args()
-    return args
+    return args.dB, args.pattern, args.dry_run
 
 
 def _validate_paths(sp: str, tp: str) -> bool:
@@ -156,7 +155,7 @@ def _validate_paths(sp: str, tp: str) -> bool:
         __logger__.error("Source folder %s doesn't exists, quiting...", sp)
         return False
     if not Path(tp).exists():
-        __logger__.info("Target folder %s doesn't exists...creating", sp)
+        __logger__.info("Target folder %s doesn't exists... creating", sp)
         Path(tp).mkdir()
     return True
 
@@ -167,6 +166,6 @@ if __name__ == '__main__':
     target_path = envs.get("TARGET", None)
     if not _validate_paths(sp=source_path, tp=target_path):
         sys.exit()
-    run_args = get_args()
-    fm = collect(source=source_path, target=target_path, pattern=run_args.pattern)
-    convert(file_map=fm, newdB=run_args.dB, dry_run=run_args.dry_run)
+    decibel, pattern, dry_run = get_args()
+    fm = create_file_map(source=source_path, target=target_path, pattern=pattern, decibel=decibel)
+    convert(file_map=fm, dry_run=dry_run)
