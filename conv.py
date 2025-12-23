@@ -7,6 +7,28 @@ from typing import TypedDict
 
 from dotenv import dotenv_values
 
+# The `loudnorm` filter in `ffmpeg` applies **EBU R128 loudness normalization** to your audio. Here’s what it does:
+
+# - **Measures and adjusts loudness** so that the output matches a target loudness level (default: -23 LUFS, but you can set your own).
+# - **Balances perceived loudness** across different audio files, making them sound equally loud to listeners.
+# - **Optionally corrects true peak levels** to avoid digital clipping.
+# - **Handles short-term and momentary loudness** for more consistent results.
+
+# **In practice:**
+# - It analyzes the audio to determine its current loudness.
+# - It applies gain (boost or reduction) so the output matches your target loudness.
+# - It can also limit peaks to prevent distortion.
+
+# **Typical usage:**
+# ```
+# ffmpeg -i input.mp4 -c:v copy -filter:a "loudnorm=I=-16:TP=-1.5:LRA=11" output.mp4
+# ```
+# - `I` = Integrated loudness target (in LUFS, e.g., -16 for YouTube, -23 for broadcast)
+# - `LRA` = Loudness range target
+
+# **Summary:**
+# `loudnorm` is a smart, standards-based way to make your audio consistently loud and clear, without unwanted distortion.
+
 
 logging.basicConfig(level=logging.INFO)
 __logger__ = logging.getLogger("converter")
@@ -18,6 +40,7 @@ class FileInfo(TypedDict):
     original_files: list[str]
     new_files: list[str]
     decibel_bump: str
+    done: bool
 
 
 def sanitize_file_name(filename: str) -> str:
@@ -93,18 +116,22 @@ def convert(file_map: dict[str, FileInfo], dry_run: bool):
                 video_data["audio_bitrate"],
                 new_file
             ]
-            __logger__.debug(command)
+            __logger__.info(command)
             if not dry_run:
                 try:
                     subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                     __logger__.info("%s -> %s converted", input_file, new_file)
                 except subprocess.CalledProcessError as exc:
                     __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+                    video_data['done'] = False
+        video_data['done'] = True
+        print(f"Setting vide data: {video_data['done']}")
+    return file_map
 
 
 def create_file_map(source: str, target: str, pattern: str, decibel: str) -> dict[str, FileInfo]:
     file_map: dict[str, FileInfo] = {}
-    for item in Path(source).glob(f"*{pattern}*.mp4"):
+    for item in Path(source).glob(pattern):
         original_fn = Path(source, item.name).as_posix()
         stem = sanitize_file_name(item.name)
         new_fn_base = Path(target, stem)
@@ -117,7 +144,8 @@ def create_file_map(source: str, target: str, pattern: str, decibel: str) -> dic
                 'new_files': [
                     get_new_file_name(filename_base=new_fn_base, decibel_value=decibel, index=count)
                 ],
-                'decibel_bump': decibel
+                'decibel_bump': decibel,
+                'done': False
             }
         elif stem in file_map:
             count = file_map[stem].get("count") + 1
@@ -128,6 +156,17 @@ def create_file_map(source: str, target: str, pattern: str, decibel: str) -> dic
             )
             file_map[stem]['new_files'].append(new_file)
     return file_map
+
+
+def clear_target_directory(tp: str, pattern: str, dry_run: bool) -> None:
+    counter = 0
+    for f in Path(tp).glob(pattern):
+        if f.is_file() or f.is_symlink():
+            counter += 1
+            if not dry_run:
+                f.unlink()
+    action_log_msg = "Deleted" if not dry_run else "Would delete"
+    __logger__.info("%s %d# files from target folder with pattern %s", action_log_msg, counter, pattern)
 
 
 def get_args() -> tuple[str, str, bool]:
@@ -141,10 +180,13 @@ def get_args() -> tuple[str, str, bool]:
         "--pattern", type=str, nargs="?", help="Pattern to match in MP4 filenames.", default=""
     )
     parser.add_argument(
+        "--clear-first", action="store_true", help="Clear target folder first"
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="Print ffmpeg commands without executing them."
     )
     args = parser.parse_args()
-    return args.dB, args.pattern, args.dry_run
+    return args.dB, args.pattern, args.clear_first, args.dry_run
 
 
 def _validate_paths(sp: str, tp: str) -> bool:
@@ -160,12 +202,21 @@ def _validate_paths(sp: str, tp: str) -> bool:
     return True
 
 
+def _normalize_pattern(pattern: str) -> str:
+    if not pattern:
+        return "*.mp4"
+    return f"*{pattern}*.mp4"
+
+
 if __name__ == '__main__':
     envs = dotenv_values()
     source_path = envs.get("SOURCE", None)
     target_path = envs.get("TARGET", None)
     if not _validate_paths(sp=source_path, tp=target_path):
         sys.exit()
-    decibel, pattern, dry_run = get_args()
+    decibel, pattern, clear_first, dry_run = get_args()
+    pattern = _normalize_pattern(pattern)
+    if clear_first:
+        clear_target_directory(tp=target_path, pattern=pattern, dry_run=dry_run)
     fm = create_file_map(source=source_path, target=target_path, pattern=pattern, decibel=decibel)
     convert(file_map=fm, dry_run=dry_run)
