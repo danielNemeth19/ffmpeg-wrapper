@@ -1,5 +1,6 @@
 import sys
 import argparse
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -28,6 +29,9 @@ from dotenv import dotenv_values
 
 # **Summary:**
 # `loudnorm` is a smart, standards-based way to make your audio consistently loud and clear, without unwanted distortion.
+
+# test:
+# ffmpeg -i input.mp4 -af loudnorm=I=-16:TP=-1.5:LRA=11:print_format=summary -f null -
 
 
 logging.basicConfig(level=logging.INFO)
@@ -91,6 +95,44 @@ def extract_audio_bitrate(filename: str) -> str:
         __logger__.error("Error extracting bitrate from %s: %s", filename, exc.stderr)
         raise
     return bitrate
+
+
+def parse_loudnorm_summary(text: str) -> dict:
+    parse_flag = False
+    captured = ""
+    for row in text.split('\n'):
+        if row.startswith("{"):
+            parse_flag = True
+        if parse_flag:
+            captured += row
+        if row.startswith("}"):
+            parse_flag = False
+
+    summary = json.loads(captured)
+    return summary
+
+
+def get_loudnorm_summary(file_map: dict[str, FileInfo]):
+    for video, video_data in file_map.items():
+        __logger__.info("Processing: %s", video)
+        for input_file in video_data["original_files"]:
+            command = [
+                "ffmpeg",
+                "-i",
+                input_file,
+                "-af",
+                "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+                "-f",
+                "null",
+                "-"
+            ]
+            __logger__.debug(command)
+            try:
+                raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
+                summary = parse_loudnorm_summary(raw_output.stderr)
+                __logger__.info("loudness for %s: %s", input_file, summary['input_i'])
+            except subprocess.CalledProcessError as exc:
+                __logger__.error("Error converting %s: %s", input_file, exc.stderr)
 
 
 def convert(file_map: dict[str, FileInfo], dry_run: bool):
@@ -219,4 +261,5 @@ if __name__ == '__main__':
     if clear_first:
         clear_target_directory(tp=target_path, pattern=pattern, dry_run=dry_run)
     fm = create_file_map(source=source_path, target=target_path, pattern=pattern, decibel=decibel)
-    convert(file_map=fm, dry_run=dry_run)
+    get_loudnorm_summary(file_map=fm)
+    # convert(file_map=fm, dry_run=dry_run)
