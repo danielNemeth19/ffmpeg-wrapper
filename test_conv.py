@@ -78,7 +78,8 @@ frame=  170 fps=0.0 q=-0.0 size=N/A time=00:00:03.01 bitrate=N/A speed=6.04x ela
     "output_tp" : "-1.50",
     "output_lra" : "4.40",
     "output_thresh" : "-27.58",
-    "normalization_type" : "dynamic","target_offset" : "-0.39"
+    "normalization_type" : "dynamic",
+    "target_offset" : "-0.39"
 }
 [out#0/null @ 0x55ae5a9c7f80] video:84KiB audio:5120KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
 frame=  206 fps=0.0 q=-0.0 Lsize=N/A time=00:00:06.87 bitrate=N/A speed=  11x elapsed=0:00:00.62
