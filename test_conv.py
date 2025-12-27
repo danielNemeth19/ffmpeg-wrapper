@@ -7,8 +7,19 @@ class TestConver(unittest.TestCase):
     def test_parse(self):
         summary = self._get_example_output()
         result = parse_loudnorm_summary(summary)
-        print(result)
-        self.assertIn("input_i", result)
+        expected = {
+            "input_i": -44.98,
+            "input_tp": -26.88,
+            "input_lra": 4.00,
+            "input_thresh": -55.76,
+            "output_i": -15.61,
+            "output_tp": -1.50,
+            "output_lra": 4.40,
+            "output_thresh": -27.58,
+            "normalization_type": "dynamic",
+            "target_offset": -0.39
+        }
+        self.assertEqual(result, expected)
 
     @staticmethod
     def _get_example_output():

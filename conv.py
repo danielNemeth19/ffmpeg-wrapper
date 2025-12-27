@@ -8,19 +8,6 @@ from typing import TypedDict
 
 from dotenv import dotenv_values
 
-# The `loudnorm` filter in `ffmpeg` applies **EBU R128 loudness normalization** to your audio. Here’s what it does:
-
-# - **Measures and adjusts loudness** so that the output matches a target loudness level (default: -23 LUFS, but you can set your own).
-# - **Balances perceived loudness** across different audio files, making them sound equally loud to listeners.
-# - **Optionally corrects true peak levels** to avoid digital clipping.
-# - **Handles short-term and momentary loudness** for more consistent results.
-
-# **In practice:**
-# - It analyzes the audio to determine its current loudness.
-# - It applies gain (boost or reduction) so the output matches your target loudness.
-# - It can also limit peaks to prevent distortion.
-
-# **Typical usage:**
 # ```
 # ffmpeg -i input.mp4 -c:v copy -filter:a "loudnorm=I=-16:TP=-1.5:LRA=7:linear=true" output.mp4
 # ```
@@ -51,10 +38,10 @@ __logger__ = logging.getLogger("converter")
 
 class FileInfo(TypedDict):
     count: int
-    audio_bitrate: str | None
-    original_files: list[str]
+    audio_bitrate: str
+    original_files: list[Path]
     new_files: list[str]
-    target_lufs: str
+    target_lufs: float
     done: bool
 
 
@@ -63,7 +50,7 @@ def sanitize_file_name(filename: str) -> str:
     path_parts = _get_new_path_parts(parts)
     stem = path_parts.removesuffix(".mp4").removesuffix(" .mp4")
     stem = _trim_index_if_exists(stem)
-    return stem
+    return stem.replace(" ", "_")
 
 
 def _get_new_path_parts(parts: list) -> str:
@@ -84,11 +71,11 @@ def _trim_index_if_exists(stem: str) -> str:
     return stem[:-3]
 
 
-def get_new_file_name(filename_base: Path, lufs_value: str, index: int) -> str:
-    return Path(f"{filename_base}lufs{lufs_value}_{index:03d}").with_suffix(".mp4").as_posix()
+def get_new_file_name(filename_base: Path, lufs_value: float, index: int) -> str:
+    return Path(f"{filename_base}_lufs{lufs_value}_{index:03d}").with_suffix(".mp4").as_posix()
 
 
-def extract_audio_bitrate(filename: str) -> str:
+def extract_audio_bitrate(file_object: Path) -> str:
     command = [
         "ffprobe",
         "-v",
@@ -99,13 +86,13 @@ def extract_audio_bitrate(filename: str) -> str:
         "stream=bit_rate",
         "-of",
         "default=noprint_wrappers=1:nokey=1",
-        filename
+        file_object.as_posix()
     ]
     try:
         raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
         bitrate = raw_bit_rate.stdout.strip()
     except subprocess.CalledProcessError as exc:
-        __logger__.error("Error extracting bitrate from %s: %s", filename, exc.stderr)
+        __logger__.error("Error extracting bitrate from %s: %s", file_object, exc.stderr)
         raise
     return bitrate
 
@@ -122,17 +109,20 @@ def parse_loudnorm_summary(text: str) -> dict:
             parse_flag = False
 
     summary = json.loads(captured)
+    for key, value in summary.items():
+        if key != "normalization_type":
+            summary[key] = float(value)
     return summary
 
 
-def get_loudnorm_summary(file_map: dict[str, FileInfo], target: str):
+def get_loudnorm_summary(file_map: dict[str, FileInfo], target: float):
     for video, video_data in file_map.items():
         __logger__.info("Processing: %s", video)
         for input_file in video_data["original_files"]:
             command = [
                 "ffmpeg",
                 "-i",
-                input_file,
+                input_file.as_posix(),
                 "-af",
                 f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json",
                 "-f",
@@ -143,13 +133,16 @@ def get_loudnorm_summary(file_map: dict[str, FileInfo], target: str):
             try:
                 raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
                 summary = parse_loudnorm_summary(raw_output.stderr)
-                __logger__.info("current loudness for %s: %s - target: %s (offset %s) ",
-                                input_file, summary['input_i'], target, summary["target_offset"])
+                diff_from_target = summary["input_i"] - target
+                __logger__.info(
+                    "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
+                    input_file.name, summary['input_i'], target, diff_from_target, summary["target_offset"]
+                )
             except subprocess.CalledProcessError as exc:
                 __logger__.error("Error converting %s: %s", input_file, exc.stderr)
 
 
-def convert(file_map: dict[str, FileInfo], target: str, dry_run: bool):
+def convert(file_map: dict[str, FileInfo], target: float, dry_run: bool):
     for video, video_data in file_map.items():
         __logger__.info("Processing: %s", video)
         for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
@@ -161,7 +154,7 @@ def convert(file_map: dict[str, FileInfo], target: str, dry_run: bool):
                 "ffmpeg",
                 "-y",
                 "-i",
-                input_file,
+                input_file.as_posix(),
                 "-c:v",
                 "copy",
                 "-af",
@@ -185,17 +178,17 @@ def convert(file_map: dict[str, FileInfo], target: str, dry_run: bool):
     return file_map
 
 
-def create_file_map(source: str, target: str, pattern: str, lufs: str) -> dict[str, FileInfo]:
+def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict[str, FileInfo]:
     file_map: dict[str, FileInfo] = {}
     for item in Path(source).glob(pattern):
-        original_fn = Path(source, item.name).as_posix()
+        original_fn = Path(source, item.name)
         stem = sanitize_file_name(item.name)
         new_fn_base = Path(target, stem)
         if stem not in file_map:
             count = 1
             file_map[stem] = {
                 'count': count,
-                'audio_bitrate': None,
+                'audio_bitrate': "",
                 'original_files': [original_fn],
                 'new_files': [
                     get_new_file_name(filename_base=new_fn_base, lufs_value=lufs, index=count)
@@ -225,12 +218,12 @@ def clear_target_directory(tp: str, pattern: str, dry_run: bool) -> None:
     __logger__.info("%s %d# files from target folder with pattern %s", action_log_msg, counter, pattern)
 
 
-def get_args() -> tuple[str, str, bool]:
+def get_args() -> tuple[int, str, bool, bool, bool]:
     parser = argparse.ArgumentParser(
         description="Batch adjust audio volume and re-encode MP4 files."
     )
     parser.add_argument(
-        "--lufs", type=str, help="Target integrated loudness in LUFS", default="-16"
+        "--lufs", type=float, help="Target integrated loudness in LUFS", default="-16"
     )
     parser.add_argument(
         "--pattern", type=str, nargs="?", help="Pattern to match in MP4 filenames.", default=""
