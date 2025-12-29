@@ -1,10 +1,40 @@
 import unittest
 
-from conv import parse_loudnorm_summary
+from conv import sanitize_file_name, get_new_file_name, parse_loudnorm_summary
 
 
-class TestConver(unittest.TestCase):
-    def test_parse(self):
+class TestConvert(unittest.TestCase):
+    def test_sanitize_file_name(self):
+        fns = [
+            "vlc-record-2025-12-26-17h50m10s-test.mp4-.mp4",
+            "has space  in it.mp4",
+            "has.dot.in.it.mp4",
+            "has_few_underscores.mp4",
+            "has_index_with_leading_underscore_001.mp4",
+            "has_index002.mp4",
+        ]
+
+        expected = [
+            "test",
+            "has_space_in_it",
+            "has_dot_in_it",
+            "has_few_underscores",
+            "has_index_with_leading_underscore",
+            "has_index",
+        ]
+        for original, expected in zip(fns, expected):
+            with self.subTest(original=original, expected=expected):
+                got = sanitize_file_name(original)
+                self.assertEqual(got, expected)
+
+    def test_get_new_file_name(self):
+        fn_base = "my_track"
+        lufs_target = -23.0
+        index = 2
+        new_file_name = get_new_file_name(fn_base, lufs_target, index)
+        self.assertEqual(new_file_name, "my_track_lufs-23_002.mp4")
+
+    def test_parsing_loudnorm_summary(self):
         summary = self._get_example_output()
         result = parse_loudnorm_summary(summary)
         expected = {

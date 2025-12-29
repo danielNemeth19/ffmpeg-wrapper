@@ -38,7 +38,7 @@ __logger__ = logging.getLogger("converter")
 
 class FileInfo(TypedDict):
     count: int
-    audio_bitrate: str
+    audio_bitrate: int
     original_files: list[Path]
     new_files: list[str]
     target_lufs: float
@@ -50,7 +50,7 @@ def sanitize_file_name(filename: str) -> str:
     path_parts = _get_new_path_parts(parts)
     stem = path_parts.removesuffix(".mp4").removesuffix(" .mp4")
     stem = _trim_index_if_exists(stem)
-    return stem.replace(" ", "_")
+    return stem.replace("  ", "_").replace(" ", "_").replace(".", "_")
 
 
 def _get_new_path_parts(parts: list) -> str:
@@ -72,10 +72,10 @@ def _trim_index_if_exists(stem: str) -> str:
 
 
 def get_new_file_name(filename_base: Path, lufs_value: float, index: int) -> str:
-    return Path(f"{filename_base}_lufs{lufs_value}_{index:03d}").with_suffix(".mp4").as_posix()
+    return Path(f"{filename_base}_lufs{int(lufs_value)}_{index:03d}").with_suffix(".mp4").as_posix()
 
 
-def extract_audio_bitrate(file_object: Path) -> str:
+def extract_audio_bitrate(file_object: Path) -> int:
     command = [
         "ffprobe",
         "-v",
@@ -94,7 +94,7 @@ def extract_audio_bitrate(file_object: Path) -> str:
     except subprocess.CalledProcessError as exc:
         __logger__.error("Error extracting bitrate from %s: %s", file_object, exc.stderr)
         raise
-    return bitrate
+    return int(bitrate)
 
 
 def parse_loudnorm_summary(text: str) -> dict:
@@ -162,7 +162,7 @@ def convert(file_map: dict[str, FileInfo], target: float, dry_run: bool):
                 "-c:a",
                 "aac",
                 "-b:a",
-                video_data["audio_bitrate"],
+                str(video_data["audio_bitrate"]),
                 new_file
             ]
             __logger__.info(command)
@@ -188,7 +188,7 @@ def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict
             count = 1
             file_map[stem] = {
                 'count': count,
-                'audio_bitrate': "",
+                'audio_bitrate': 0,
                 'original_files': [original_fn],
                 'new_files': [
                     get_new_file_name(filename_base=new_fn_base, lufs_value=lufs, index=count)
@@ -241,7 +241,7 @@ def get_args() -> tuple[int, str, bool, bool, bool]:
     return args.lufs, args.pattern, args.check_loudness, args.clear_first, args.dry_run
 
 
-def _validate_paths(sp: str, tp: str) -> bool:
+def _validate_paths(sp: str | None, tp: str | None) -> bool:
     if not sp or not tp:
         __logger__.error("Source and target needs to be defined, got %s and %s", sp, tp)
         return False
@@ -268,7 +268,7 @@ if __name__ == '__main__':
         sys.exit()
     lufs, pattern, check_loudness, clear_first, dry_run = get_args()
     pattern = _normalize_pattern(pattern)
-    if clear_first:
+    if clear_first and target_path:
         clear_target_directory(tp=target_path, pattern=pattern, dry_run=dry_run)
     fm = create_file_map(source=source_path, target=target_path, pattern=pattern, lufs=lufs)
     if check_loudness:
