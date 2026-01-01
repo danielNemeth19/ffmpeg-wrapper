@@ -16,9 +16,6 @@ from dotenv import dotenv_values
 # - LRA=7 -> Loudness range: 7 LU (keeps dynamics natural but not too wide for speech).
 # - linear=true -> Use linear normalization (better for speach)
 
-# test:
-# ffmpeg -i input.mp4 -af loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json -f null -
-
 # To **formalize** (normalize) all your videos for concatenation, you should:
 # - **Re-encode both video and audio** to a common format, resolution, frame rate, and audio settings.
 # - Apply the `loudnorm` filter to the audio.
@@ -29,6 +26,15 @@ from dotenv import dotenv_values
 # -c:v libx264 -preset fast -crf 23 \
 # -c:a aac -b:a 192k -ar 48000 -ac 2 \
 # -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
+# output.mp4
+
+# cutting
+# ffmpeg -ss 00:01:23 -i input.mp4 \
+# -vf "scale=1280:720,fps=30" \
+# -c:v libx264 -preset fast -crf 23 \
+# -c:a aac -b:a 192k -ar 48000 -ac 2 \
+# -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
+# -t 30 \
 # output.mp4
 
 
@@ -142,7 +148,7 @@ def get_loudnorm_summary(file_map: dict[str, FileInfo], target: float):
                 __logger__.error("Error converting %s: %s", input_file, exc.stderr)
 
 
-def convert(file_map: dict[str, FileInfo], target: float, dry_run: bool):
+def normalize_loudness(file_map: dict[str, FileInfo], target: float, dry_run: bool):
     for video, video_data in file_map.items():
         __logger__.info("Processing: %s", video)
         for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
@@ -178,10 +184,20 @@ def convert(file_map: dict[str, FileInfo], target: float, dry_run: bool):
     return file_map
 
 
+def create_cuts(source: str, target: str, pattern: str, cuts: int):
+    input_files = []
+    for item in Path(source).glob(pattern):
+        original_fn = Path(item)
+        stem = sanitize_file_name(item.name)
+        new_fn_base = Path(target, stem)
+        print(new_fn_base)
+    return
+
+
 def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict[str, FileInfo]:
     file_map: dict[str, FileInfo] = {}
     for item in Path(source).glob(pattern):
-        original_fn = Path(source, item.name)
+        original_fn = Path(item)
         stem = sanitize_file_name(item.name)
         new_fn_base = Path(target, stem)
         if stem not in file_map:
@@ -218,27 +234,33 @@ def clear_target_directory(tp: str, pattern: str, dry_run: bool) -> None:
     __logger__.info("%s %d# files from target folder with pattern %s", action_log_msg, counter, pattern)
 
 
-def get_args() -> tuple[int, str, bool, bool, bool]:
+def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Batch adjust audio volume and re-encode MP4 files."
     )
     parser.add_argument(
-        "--lufs", type=float, help="Target integrated loudness in LUFS", default="-16"
+        "-l", "--lufs", type=float, help="Target integrated loudness in LUFS", default="-16"
     )
     parser.add_argument(
-        "--pattern", type=str, nargs="?", help="Pattern to match in MP4 filenames.", default=""
+        "-p", "--pattern", type=str, nargs="?", help="Pattern to match in MP4 filenames.", default=""
     )
     parser.add_argument(
-        "--check-loudness", action="store_true", help="Check current loudness levels"
+        "-cl", "--check-loudness", action="store_true", help="Check current loudness levels"
     )
     parser.add_argument(
-        "--clear-first", action="store_true", help="Clear target folder first"
+        "-n", "--normalize", action="store_true", help="Re-encodes audio of files to normalize loudness"
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="Print ffmpeg commands without executing them."
+        "-c", "--cuts", type=int, help="Split each video into segments of the specified length in seconds"
+    )
+    parser.add_argument(
+        "-cf", "--clear-first", action="store_true", help="Clear target folder first"
+    )
+    parser.add_argument(
+        "-dr", "--dry-run", action="store_true", help="Print ffmpeg commands without executing them."
     )
     args = parser.parse_args()
-    return args.lufs, args.pattern, args.check_loudness, args.clear_first, args.dry_run
+    return args
 
 
 def _validate_paths(sp: str | None, tp: str | None) -> bool:
@@ -260,17 +282,22 @@ def _normalize_pattern(pattern: str) -> str:
     return f"*{pattern}*.mp4"
 
 
+
+
 if __name__ == '__main__':
     envs = dotenv_values()
     source_path = envs.get("SOURCE", None)
     target_path = envs.get("TARGET", None)
     if not _validate_paths(sp=source_path, tp=target_path):
         sys.exit()
-    lufs, pattern, check_loudness, clear_first, dry_run = get_args()
-    pattern = _normalize_pattern(pattern)
-    if clear_first and target_path:
-        clear_target_directory(tp=target_path, pattern=pattern, dry_run=dry_run)
-    fm = create_file_map(source=source_path, target=target_path, pattern=pattern, lufs=lufs)
-    if check_loudness:
-        get_loudnorm_summary(file_map=fm, target=lufs)
-    convert(file_map=fm, target=lufs, dry_run=dry_run)
+    args = get_args()
+    pattern = _normalize_pattern(args.pattern)
+    if args.clear_first and target_path:
+        clear_target_directory(tp=target_path, pattern=pattern, dry_run=args.dry_run)
+    fm = create_file_map(source=source_path, target=target_path, pattern=pattern, lufs=args.lufs)
+    if args.check_loudness:
+        get_loudnorm_summary(file_map=fm, target=args.lufs)
+    if args.normalize:
+        normalize_loudness(file_map=fm, target=args.lufs, dry_run=args.dry_run)
+    if args.cuts:
+        create_cuts(source=source_path, target=target_path, pattern=pattern, cuts=args.cuts)
