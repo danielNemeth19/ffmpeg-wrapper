@@ -1,5 +1,6 @@
 import sys
 import argparse
+import math
 import json
 import logging
 import subprocess
@@ -103,6 +104,26 @@ def extract_audio_bitrate(file_object: Path) -> int:
     return int(bitrate)
 
 
+def extract_duration(file_object: Path) -> int:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        file_object.as_posix()
+    ]
+    try:
+        raw_duration = subprocess.run(command, check=True, capture_output=True, text=True)
+        duration = raw_duration.stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        __logger__.error("Error extracting duration from %s: %s", file_object, exc.stderr)
+        raise
+    return float(duration)
+
+
 def parse_loudnorm_summary(text: str) -> dict:
     parse_flag = False
     captured = ""
@@ -184,13 +205,41 @@ def normalize_loudness(file_map: dict[str, FileInfo], target: float, dry_run: bo
     return file_map
 
 
-def create_cuts(source: str, target: str, pattern: str, cuts: int):
-    input_files = []
+# faster cut without encoding: ffmpeg -ss {start} -i input.mp4 -t {duration} -c copy output.mp4
+# to get duration: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 input.mp4
+def create_cuts(source: str, target: str, pattern: str, cuts: int, dry_run: bool):
     for item in Path(source).glob(pattern):
-        original_fn = Path(item)
+        __logger__.info("Processing  %s", item.as_posix())
+        duration = extract_duration(item)
+        segments = math.ceil(duration / cuts)
+        __logger__.info("Duration: %f - will make %d cuts", duration, segments)
         stem = sanitize_file_name(item.name)
         new_fn_base = Path(target, stem)
-        print(new_fn_base)
+        current_ss = 0
+        index = 0
+        while current_ss < duration:
+            command = [
+                "ffmpeg",
+                "-ss", str(current_ss),
+                "-i", item.as_posix(),
+                "-vf", "scale=1280:720,fps=30",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "48000",
+                "-ac", "2",
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                "-t", str(cuts),
+                f"{new_fn_base}-{index:03d}.mp4"
+            ]
+            __logger__.info(command)
+            if not dry_run:
+                try:
+                    subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                    __logger__.info("Cut #%d - current_ss: %d", index, current_ss)
+                except subprocess.CalledProcessError as exc:
+                    __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
+            current_ss += cuts
+            index += 1
     return
 
 
@@ -300,4 +349,4 @@ if __name__ == '__main__':
     if args.normalize:
         normalize_loudness(file_map=fm, target=args.lufs, dry_run=args.dry_run)
     if args.cuts:
-        create_cuts(source=source_path, target=target_path, pattern=pattern, cuts=args.cuts)
+        create_cuts(source=source_path, target=target_path, pattern=pattern, cuts=args.cuts, dry_run=args.dry_run)
