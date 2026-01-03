@@ -201,8 +201,31 @@ def normalize_loudness(file_map: dict[str, FileInfo], target: float, dry_run: bo
                     __logger__.error("Error converting %s: %s", input_file, exc.stderr)
                     video_data['done'] = False
         video_data['done'] = True
-        print(f"Setting vide data: {video_data['done']}")
+        __logger__.info("Setting video data: %s", video_data['done'])
     return file_map
+
+
+def get_base_cut_command(ss_string: str, t_string: str, encode: bool = False) -> list:
+    command_encode = [
+        "ffmpeg",
+        "-ss", ss_string,
+        "-vf", "scale=1280:720,fps=30",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ar", "48000",
+        "-ac", "2",
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+        "-t", t_string,
+    ]
+    command_copy = [
+        "ffmpeg",
+        "-ss", ss_string,
+        "-t", t_string,
+        "-c", "copy"
+    ]
+
+    command = command_encode if encode else command_copy
+    return command
 
 
 # faster cut without encoding: ffmpeg -ss {start} -i input.mp4 -t {duration} -c copy output.mp4
@@ -218,19 +241,23 @@ def create_cuts(source: str, target: str, pattern: str, cuts: int, dry_run: bool
         current_ss = 0
         index = 0
         while current_ss < duration:
-            command = [
-                "ffmpeg",
-                "-ss", str(current_ss),
-                "-i", item.as_posix(),
-                "-vf", "scale=1280:720,fps=30",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ar", "48000",
-                "-ac", "2",
-                "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-                "-t", str(cuts),
-                f"{new_fn_base}-{index:03d}.mp4"
-            ]
+            # command = [
+                # "ffmpeg",
+                # "-ss", str(current_ss),
+                # "-i", item.as_posix(),
+                # "-vf", "scale=1280:720,fps=30",
+                # "-c:a", "aac",
+                # "-b:a", "192k",
+                # "-ar", "48000",
+                # "-ac", "2",
+                # "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                # "-t", str(cuts),
+                # f"{new_fn_base}-{index:03d}.mp4"
+            # ]
+            command = get_base_cut_command(ss_string=str(current_ss), t_string=str(cuts))
+            command.insert(3, "-i")
+            command.insert(4, item.as_posix())
+            command.append(f"{new_fn_base}-{index:03d}.mp4")
             __logger__.info(command)
             if not dry_run:
                 try:
@@ -240,7 +267,6 @@ def create_cuts(source: str, target: str, pattern: str, cuts: int, dry_run: bool
                     __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
             current_ss += cuts
             index += 1
-    return
 
 
 def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict[str, FileInfo]:
@@ -303,6 +329,9 @@ def get_args() -> argparse.Namespace:
         "-c", "--cuts", type=int, help="Split each video into segments of the specified length in seconds"
     )
     parser.add_argument(
+        "-re", "--re-encode", action="store_true", help="Re-encode both video and audio stream to sensible defaults"
+    )
+    parser.add_argument(
         "-cf", "--clear-first", action="store_true", help="Clear target folder first"
     )
     parser.add_argument(
@@ -329,8 +358,6 @@ def _normalize_pattern(pattern: str) -> str:
     if not pattern:
         return "*.mp4"
     return f"*{pattern}*.mp4"
-
-
 
 
 if __name__ == '__main__':
