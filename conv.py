@@ -43,6 +43,16 @@ logging.basicConfig(level=logging.INFO)
 __logger__ = logging.getLogger("converter")
 
 
+DEFAULT_RE_ENCODE_OPTS = [
+    "-vf", "scale=1280:720,fps=30",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-ar", "48000",
+    "-ac", "2",
+    "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+]
+
+
 class FileInfo(TypedDict):
     count: int
     audio_bitrate: int
@@ -205,68 +215,29 @@ def normalize_loudness(file_map: dict[str, FileInfo], target: float, dry_run: bo
     return file_map
 
 
-def get_base_cut_command(ss_string: str, t_string: str, encode: bool = False) -> list:
-    command_encode = [
-        "ffmpeg",
-        "-ss", ss_string,
-        "-vf", "scale=1280:720,fps=30",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-ar", "48000",
-        "-ac", "2",
-        "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-        "-t", t_string,
-    ]
-    command_copy = [
-        "ffmpeg",
-        "-ss", ss_string,
-        "-t", t_string,
-        "-c", "copy"
-    ]
-
-    command = command_encode if encode else command_copy
-    return command
-
-
-# faster cut without encoding: ffmpeg -ss {start} -i input.mp4 -t {duration} -c copy output.mp4
-# to get duration: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 input.mp4
-def create_cuts(source: str, target: str, pattern: str, cuts: int, dry_run: bool):
+def create_cuts(source: str, target: str, pattern: str, segment_size: int, re_encode: bool, dry_run: bool):
     for item in Path(source).glob(pattern):
         __logger__.info("Processing  %s", item.as_posix())
         duration = extract_duration(item)
-        segments = math.ceil(duration / cuts)
+        segments = math.ceil(duration / segment_size)
         __logger__.info("Duration: %f - will make %d cuts", duration, segments)
         stem = sanitize_file_name(item.name)
         new_fn_base = Path(target, stem)
         current_ss = 0
-        index = 0
-        while current_ss < duration:
-            # command = [
-                # "ffmpeg",
-                # "-ss", str(current_ss),
-                # "-i", item.as_posix(),
-                # "-vf", "scale=1280:720,fps=30",
-                # "-c:a", "aac",
-                # "-b:a", "192k",
-                # "-ar", "48000",
-                # "-ac", "2",
-                # "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-                # "-t", str(cuts),
-                # f"{new_fn_base}-{index:03d}.mp4"
-            # ]
-            command = get_base_cut_command(ss_string=str(current_ss), t_string=str(cuts))
-            command.insert(3, "-i")
-            command.insert(4, item.as_posix())
-            command.append(f"{new_fn_base}-{index:03d}.mp4")
+        for i in range(segments):
+            command = ["ffmpeg", "-ss", str(current_ss), "-t", str(segment_size)]
+            command.extend(["-i", item.as_posix()])
+            opts = DEFAULT_RE_ENCODE_OPTS if re_encode else ["-c", "copy"]
+            command.extend(opts)
+            command.append(f"{new_fn_base}-{i:03d}.mp4")
             __logger__.info(command)
             if not dry_run:
                 try:
                     subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                    __logger__.info("Cut #%d - current_ss: %d", index, current_ss)
+                    __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
                 except subprocess.CalledProcessError as exc:
                     __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
-            current_ss += cuts
-            index += 1
+            current_ss += segment_size
 
 
 def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict[str, FileInfo]:
@@ -374,6 +345,17 @@ if __name__ == '__main__':
     if args.check_loudness:
         get_loudnorm_summary(file_map=fm, target=args.lufs)
     if args.normalize:
-        normalize_loudness(file_map=fm, target=args.lufs, dry_run=args.dry_run)
+        normalize_loudness(
+            file_map=fm,
+            target=args.lufs,
+            dry_run=args.dry_run
+        )
     if args.cuts:
-        create_cuts(source=source_path, target=target_path, pattern=pattern, cuts=args.cuts, dry_run=args.dry_run)
+        create_cuts(
+            source=source_path,
+            target=target_path,
+            pattern=pattern,
+            segment_size=args.cuts,
+            re_encode=args.re_encode,
+            dry_run=args.dry_run
+        )
