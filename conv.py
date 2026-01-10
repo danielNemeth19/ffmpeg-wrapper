@@ -6,6 +6,7 @@ import logging
 import subprocess
 from pathlib import Path
 from typing import TypedDict
+from collections import OrderedDict
 
 from dotenv import dotenv_values
 
@@ -60,6 +61,43 @@ class FileInfo(TypedDict):
     new_files: list[str]
     target_lufs: float
     done: bool
+
+
+class Converter:
+    def __init__(self, envs: OrderedDict[str, str], args: argparse.Namespace):
+        self.args = args
+        self.source_path = self._set_source_path(envs)
+        self.target_path = self._set_target_path(envs)
+        self._validate_args(args)
+        self.pattern = self._normalize_pattern()
+
+    @staticmethod
+    def _set_source_path(envs):
+        sp = envs.get("SOURCE", None)
+        if not sp:
+            __logger__.error("Source needs to be defined, got %s", sp)
+            sys.exit(1)
+        if not Path(sp).exists():
+            __logger__.error("Source folder doesn't exists,quiting...")
+            sys.exit(1)
+        return sp
+
+    @staticmethod
+    def _set_target_path(envs):
+        tp = envs.get("TARGET", None)
+        if not Path(tp).exists():
+            __logger__.info("Target folder %s doesn't exists... creating", tp)
+            Path(tp).mkdir()
+        return tp
+
+    def _normalize_pattern(self) -> str:
+        if not self.args.pattern:
+            return "*.mp4"
+        return f"*{self.args.pattern}*.mp4"
+
+    def _validate_args(self, args):
+        return
+
 
 
 def sanitize_file_name(filename: str) -> str:
@@ -266,6 +304,7 @@ def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict
                 filename_base=new_fn_base, lufs_value=lufs, index=count
             )
             file_map[stem]['new_files'].append(new_file)
+    __logger__.info("Found %d files", len(file_map.keys()))
     return file_map
 
 

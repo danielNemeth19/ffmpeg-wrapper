@@ -1,9 +1,51 @@
+from argparse import Namespace
 import unittest
+from unittest.mock import patch
 
-from conv import sanitize_file_name, get_new_file_name, parse_loudnorm_summary
+from conv import Converter, sanitize_file_name, get_new_file_name, parse_loudnorm_summary
 
 
 class TestConvert(unittest.TestCase):
+    def setUp(self):
+        self.default_env = {
+            "SOURCE": "/home/user/Videos",
+            "TARGET": "/home/user/Videos/done"
+        }
+
+    def test_set_source_path_raises_error(self):
+        with self.assertRaises(SystemExit) as cm:
+            Converter({}, Namespace())
+        self.assertEqual(cm.exception.code, 1)
+        envs = {"SOURCE": "/no/folder/like/this"}
+        with self.assertRaises(SystemExit) as cm:
+            Converter(envs, Namespace(pattern="test"))
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("pathlib.Path.exists")
+    def test_paths_are_set_correctly(self, mocked_exist):
+        mocked_exist.return_value = True
+        conv = Converter(self.default_env, Namespace(pattern="test"))
+        self.assertEqual(conv.source_path, "/home/user/Videos")
+        self.assertEqual(conv.target_path, "/home/user/Videos/done")
+
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.mkdir")
+    def test_paths_are_set_correctly_2(self, mock_make, mocked_exist):
+        mocked_exist.side_effect = [True, False]
+        mock_make.return_value = True
+        conv = Converter(self.default_env, Namespace(pattern="test"))
+        self.assertEqual(conv.source_path, "/home/user/Videos")
+        self.assertEqual(conv.target_path, "/home/user/Videos/done")
+        mock_make.assert_called_once_with()
+
+    @patch("pathlib.Path.exists")
+    def test_normalizing_pattern(self, mocked_exist):
+        mocked_exist.return_value = True
+        for pattern, normalized in zip(("", "artist_name"), ("*.mp4", "*artist_name*.mp4")):
+            with self.subTest(pattern=pattern, normalized=normalized):
+                conv = Converter(self.default_env, Namespace(pattern=pattern))
+                self.assertEqual(conv.pattern, normalized)
+
     def test_sanitize_file_name(self):
         fns = [
             "vlc-record-2025-12-26-17h50m10s-test.mp4-.mp4",
