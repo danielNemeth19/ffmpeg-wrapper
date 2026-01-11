@@ -65,11 +65,14 @@ class FileInfo(TypedDict):
 
 class Converter:
     def __init__(self, envs: OrderedDict[str, str], args: argparse.Namespace):
+        self._validate_args(args)
         self.args = args
         self.source_path = self._set_source_path(envs)
         self.target_path = self._set_target_path(envs)
-        self._validate_args(args)
         self.pattern = self._normalize_pattern()
+        self.file_map = self._set_file_map()
+        self.dry_run = args.dry_run
+        self.clear_target_directory()
 
     @staticmethod
     def _set_source_path(envs):
@@ -95,228 +98,229 @@ class Converter:
             return "*.mp4"
         return f"*{self.args.pattern}*.mp4"
 
+    def _set_file_map(self):
+        if self.args.check_loudness or self.args.normalize:
+            return self.create_file_map()
+        return None
+
     def _validate_args(self, args):
         return
 
+    def clear_target_directory(self) -> None:
+        if not self.args.clear_first:
+            return
+        counter = 0
+        for f in Path(self.target_path).iterdir():
+            if f.is_file() or f.is_symlink():
+                counter += 1
+                if not self.dry_run:
+                    f.unlink()
+        action_log_msg = "Deleted" if not self.dry_run else "Would delete"
+        __logger__.info("%s %d# files from target folder with pattern %s", action_log_msg, counter, self.pattern)
 
+    def sanitize_file_name(self, filename: str) -> str:
+        parts = filename.split('-')
+        path_parts = self._get_new_path_parts(parts)
+        stem = path_parts.removesuffix(".mp4").removesuffix(" .mp4")
+        stem = self._trim_index_if_exists(stem)
+        return stem.replace("  ", "_").replace(" ", "_").replace(".", "_")
 
-def sanitize_file_name(filename: str) -> str:
-    parts = filename.split('-')
-    path_parts = _get_new_path_parts(parts)
-    stem = path_parts.removesuffix(".mp4").removesuffix(" .mp4")
-    stem = _trim_index_if_exists(stem)
-    return stem.replace("  ", "_").replace(" ", "_").replace(".", "_")
+    @staticmethod
+    def _get_new_path_parts(parts: list) -> str:
+        if len(parts) < 6:
+            return Path("".join(parts).strip()).stem
+        return Path("".join(parts[6:]).strip()).stem
 
+    @staticmethod
+    def _trim_index_if_exists(stem: str) -> str:
+        suffix = stem[-3:]
+        try:
+            int(suffix)
+        except ValueError:
+            __logger__.debug("suffix %s is not int for %s", suffix, stem)
+            return stem
+        if stem[-4] == "_":
+            return stem[:-4]
+        return stem[:-3]
 
-def _get_new_path_parts(parts: list) -> str:
-    if len(parts) < 6:
-        return Path("".join(parts).strip()).stem
-    return Path("".join(parts[6:]).strip()).stem
+    @staticmethod
+    def get_new_file_name(filename_base: Path, lufs_value: float, index: int) -> str:
+        return Path(f"{filename_base}_lufs{int(lufs_value)}_{index:03d}").with_suffix(".mp4").as_posix()
 
-
-def _trim_index_if_exists(stem: str) -> str:
-    suffix = stem[-3:]
-    try:
-        int(suffix)
-    except ValueError:
-        __logger__.debug("suffix %s is not int for %s", suffix, stem)
-        return stem
-    if stem[-4] == "_":
-        return stem[:-4]
-    return stem[:-3]
-
-
-def get_new_file_name(filename_base: Path, lufs_value: float, index: int) -> str:
-    return Path(f"{filename_base}_lufs{int(lufs_value)}_{index:03d}").with_suffix(".mp4").as_posix()
-
-
-def extract_audio_bitrate(file_object: Path) -> int:
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
-        "-show_entries",
-        "stream=bit_rate",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        file_object.as_posix()
-    ]
-    try:
-        raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
-        bitrate = raw_bit_rate.stdout.strip()
-    except subprocess.CalledProcessError as exc:
-        __logger__.error("Error extracting bitrate from %s: %s", file_object, exc.stderr)
-        raise
-    return int(bitrate)
-
-
-def extract_duration(file_object: Path) -> int:
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        file_object.as_posix()
-    ]
-    try:
-        raw_duration = subprocess.run(command, check=True, capture_output=True, text=True)
-        duration = raw_duration.stdout.strip()
-    except subprocess.CalledProcessError as exc:
-        __logger__.error("Error extracting duration from %s: %s", file_object, exc.stderr)
-        raise
-    return float(duration)
-
-
-def parse_loudnorm_summary(text: str) -> dict:
-    parse_flag = False
-    captured = ""
-    for row in text.split('\n'):
-        if row.startswith("{"):
-            parse_flag = True
-        if parse_flag:
-            captured += row
-        if row.startswith("}"):
-            parse_flag = False
-
-    summary = json.loads(captured)
-    for key, value in summary.items():
-        if key != "normalization_type":
-            summary[key] = float(value)
-    return summary
-
-
-def get_loudnorm_summary(file_map: dict[str, FileInfo], target: float):
-    for video, video_data in file_map.items():
-        __logger__.info("Processing: %s", video)
-        for input_file in video_data["original_files"]:
-            command = [
-                "ffmpeg",
-                "-i",
-                input_file.as_posix(),
-                "-af",
-                f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json",
-                "-f",
-                "null",
-                "-"
-            ]
-            __logger__.debug(command)
-            try:
-                raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
-                summary = parse_loudnorm_summary(raw_output.stderr)
-                diff_from_target = summary["input_i"] - target
-                __logger__.info(
-                    "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
-                    input_file.name, summary['input_i'], target, diff_from_target, summary["target_offset"]
+    def create_file_map(self) -> dict[str, FileInfo]:
+        file_map: dict[str, FileInfo] = {}
+        for item in Path(self.source_path).glob(self.pattern):
+            original_fn = Path(item)
+            stem = self.sanitize_file_name(item.name)
+            new_fn_base = Path(self.target_path, stem)
+            if stem not in file_map:
+                count = 1
+                file_map[stem] = {
+                    'count': count,
+                    'audio_bitrate': 0,
+                    'original_files': [original_fn],
+                    'new_files': [
+                        self.get_new_file_name(
+                            filename_base=new_fn_base, lufs_value=self.args.lufs, index=count
+                            )
+                    ],
+                    'target_lufs': self.args.lufs,
+                    'done': False
+                }
+            elif stem in file_map:
+                count = file_map[stem].get("count") + 1
+                file_map[stem]["count"] = count
+                file_map[stem]['original_files'].append(original_fn)
+                new_file = self.get_new_file_name(
+                    filename_base=new_fn_base, lufs_value=self.args.lufs, index=count
                 )
-            except subprocess.CalledProcessError as exc:
-                __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+                file_map[stem]['new_files'].append(new_file)
+        __logger__.info("Found %d files", len(file_map.keys()))
+        return file_map
 
+    @staticmethod
+    def parse_loudnorm_summary(text: str) -> dict:
+        parse_flag = False
+        captured = ""
+        for row in text.split('\n'):
+            if row.startswith("{"):
+                parse_flag = True
+            if parse_flag:
+                captured += row
+            if row.startswith("}"):
+                parse_flag = False
 
-def normalize_loudness(file_map: dict[str, FileInfo], target: float, dry_run: bool):
-    for video, video_data in file_map.items():
-        __logger__.info("Processing: %s", video)
-        for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
-            if not video_data["audio_bitrate"]:
-                bitrate = extract_audio_bitrate(input_file)
-                video_data["audio_bitrate"] = bitrate
-                __logger__.info("Got audio bit_rate for: %s -- %s", input_file, bitrate)
-            command = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                input_file.as_posix(),
-                "-c:v",
-                "copy",
-                "-af",
-                f"loudnorm=I={target}:TP=-1.5:LRA=5:linear=true",
-                "-c:a",
-                "aac",
-                "-b:a",
-                str(video_data["audio_bitrate"]),
-                new_file
-            ]
-            __logger__.info(command)
-            if not dry_run:
+        summary = json.loads(captured)
+        for key, value in summary.items():
+            if key != "normalization_type":
+                summary[key] = float(value)
+        return summary
+
+    def get_loudnorm_summary(self):
+        for video, video_data in self.file_map.items():
+            __logger__.info("Processing: %s", video)
+            for input_file in video_data["original_files"]:
+                command = [
+                    "ffmpeg",
+                    "-i",
+                    input_file.as_posix(),
+                    "-af",
+                    f"loudnorm=I={self.args.lufs}:TP=-1.5:LRA=11:print_format=json",
+                    "-f",
+                    "null",
+                    "-"
+                ]
+                __logger__.debug(command)
                 try:
-                    subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                    __logger__.info("%s -> %s converted", input_file, new_file)
+                    raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
+                    summary = self.parse_loudnorm_summary(raw_output.stderr)
+                    diff_from_target = summary["input_i"] - self.args.lufs
+                    __logger__.info(
+                        "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
+                        input_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
+                    )
                 except subprocess.CalledProcessError as exc:
                     __logger__.error("Error converting %s: %s", input_file, exc.stderr)
-                    video_data['done'] = False
-        video_data['done'] = True
-        __logger__.info("Setting video data: %s", video_data['done'])
-    return file_map
 
+    def normalize_loudness(self):
+        for video, video_data in self.file_map.items():
+            __logger__.info("Processing: %s", video)
+            for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
+                if not video_data["audio_bitrate"]:
+                    bitrate = self.extract_audio_bitrate(input_file)
+                    video_data["audio_bitrate"] = bitrate
+                    __logger__.info("Got audio bit_rate for: %s -- %s", input_file, bitrate)
+                command = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    input_file.as_posix(),
+                    "-c:v",
+                    "copy",
+                    "-af",
+                    f"loudnorm=I={self.args.lufs}:TP=-1.5:LRA=5:linear=true",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    str(video_data["audio_bitrate"]),
+                    new_file
+                ]
+                __logger__.info(command)
+                if not self.dry_run:
+                    try:
+                        subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        __logger__.info("%s -> %s converted", input_file, new_file)
+                    except subprocess.CalledProcessError as exc:
+                        __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+                        video_data['done'] = False
+            video_data['done'] = True
+            __logger__.info("Setting video data: %s", video_data['done'])
 
-def create_cuts(source: str, target: str, pattern: str, segment_size: int, re_encode: bool, dry_run: bool):
-    for item in Path(source).glob(pattern):
-        __logger__.info("Processing  %s", item.as_posix())
-        duration = extract_duration(item)
-        segments = math.ceil(duration / segment_size)
-        __logger__.info("Duration: %f - will make %d cuts", duration, segments)
-        stem = sanitize_file_name(item.name)
-        new_fn_base = Path(target, stem)
-        current_ss = 0
-        for i in range(segments):
-            command = ["ffmpeg", "-ss", str(current_ss), "-t", str(segment_size)]
-            command.extend(["-i", item.as_posix()])
-            opts = DEFAULT_RE_ENCODE_OPTS if re_encode else ["-c", "copy"]
-            command.extend(opts)
-            command.append(f"{new_fn_base}-{i:03d}.mp4")
-            __logger__.info(command)
-            if not dry_run:
-                try:
-                    subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                    __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
-                except subprocess.CalledProcessError as exc:
-                    __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
-            current_ss += segment_size
+    @staticmethod
+    def extract_audio_bitrate(file_object: Path) -> int:
+        command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=bit_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            file_object.as_posix()
+        ]
+        try:
+            raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
+            bitrate = raw_bit_rate.stdout.strip()
+        except subprocess.CalledProcessError as exc:
+            __logger__.error("Error extracting bitrate from %s: %s", file_object, exc.stderr)
+            raise
+        return int(bitrate)
 
+    @staticmethod
+    def extract_duration(file_object: Path) -> int:
+        command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            file_object.as_posix()
+        ]
+        try:
+            raw_duration = subprocess.run(command, check=True, capture_output=True, text=True)
+            duration = raw_duration.stdout.strip()
+        except subprocess.CalledProcessError as exc:
+            __logger__.error("Error extracting duration from %s: %s", file_object, exc.stderr)
+            raise
+        return float(duration)
 
-def create_file_map(source: str, target: str, pattern: str, lufs: float) -> dict[str, FileInfo]:
-    file_map: dict[str, FileInfo] = {}
-    for item in Path(source).glob(pattern):
-        original_fn = Path(item)
-        stem = sanitize_file_name(item.name)
-        new_fn_base = Path(target, stem)
-        if stem not in file_map:
-            count = 1
-            file_map[stem] = {
-                'count': count,
-                'audio_bitrate': 0,
-                'original_files': [original_fn],
-                'new_files': [
-                    get_new_file_name(filename_base=new_fn_base, lufs_value=lufs, index=count)
-                ],
-                'target_lufs': lufs,
-                'done': False
-            }
-        elif stem in file_map:
-            count = file_map[stem].get("count") + 1
-            file_map[stem]["count"] = count
-            file_map[stem]['original_files'].append(original_fn)
-            new_file = get_new_file_name(
-                filename_base=new_fn_base, lufs_value=lufs, index=count
-            )
-            file_map[stem]['new_files'].append(new_file)
-    __logger__.info("Found %d files", len(file_map.keys()))
-    return file_map
-
-
-def clear_target_directory(tp: str, pattern: str, dry_run: bool) -> None:
-    counter = 0
-    for f in Path(tp).glob(pattern):
-        if f.is_file() or f.is_symlink():
-            counter += 1
-            if not dry_run:
-                f.unlink()
-    action_log_msg = "Deleted" if not dry_run else "Would delete"
-    __logger__.info("%s %d# files from target folder with pattern %s", action_log_msg, counter, pattern)
+    def create_cuts(self):
+        for item in Path(self.source_path).glob(self.pattern):
+            __logger__.info("Processing  %s", item.as_posix())
+            duration = self.extract_duration(item)
+            segments = math.ceil(duration / self.args.cuts)
+            __logger__.info("Duration: %f - will make %d cuts", duration, segments)
+            stem = self.sanitize_file_name(item.name)
+            new_fn_base = Path(self.target_path, stem)
+            current_ss = 0
+            for i in range(segments):
+                command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
+                command.extend(["-i", item.as_posix()])
+                opts = DEFAULT_RE_ENCODE_OPTS if self.args.re_encode else ["-c", "copy"]
+                command.extend(opts)
+                command.append(f"{new_fn_base}-{i:03d}.mp4")
+                __logger__.info(command)
+                if not self.dry_run:
+                    try:
+                        subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
+                    except subprocess.CalledProcessError as exc:
+                        __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
+                current_ss += self.args.cuts
 
 
 def get_args() -> argparse.Namespace:
@@ -351,50 +355,13 @@ def get_args() -> argparse.Namespace:
     return args
 
 
-def _validate_paths(sp: str | None, tp: str | None) -> bool:
-    if not sp or not tp:
-        __logger__.error("Source and target needs to be defined, got %s and %s", sp, tp)
-        return False
-    if not Path(sp).exists():
-        __logger__.error("Source folder %s doesn't exists, quiting...", sp)
-        return False
-    if not Path(tp).exists():
-        __logger__.info("Target folder %s doesn't exists... creating", sp)
-        Path(tp).mkdir()
-    return True
-
-
-def _normalize_pattern(pattern: str) -> str:
-    if not pattern:
-        return "*.mp4"
-    return f"*{pattern}*.mp4"
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     envs = dotenv_values()
-    source_path = envs.get("SOURCE", None)
-    target_path = envs.get("TARGET", None)
-    if not _validate_paths(sp=source_path, tp=target_path):
-        sys.exit()
     args = get_args()
-    pattern = _normalize_pattern(args.pattern)
-    if args.clear_first and target_path:
-        clear_target_directory(tp=target_path, pattern=pattern, dry_run=args.dry_run)
-    fm = create_file_map(source=source_path, target=target_path, pattern=pattern, lufs=args.lufs)
-    if args.check_loudness:
-        get_loudnorm_summary(file_map=fm, target=args.lufs)
-    if args.normalize:
-        normalize_loudness(
-            file_map=fm,
-            target=args.lufs,
-            dry_run=args.dry_run
-        )
-    if args.cuts:
-        create_cuts(
-            source=source_path,
-            target=target_path,
-            pattern=pattern,
-            segment_size=args.cuts,
-            re_encode=args.re_encode,
-            dry_run=args.dry_run
-        )
+    conv = Converter(envs=envs, args=args)
+    if conv.args.check_loudness:
+        conv.get_loudnorm_summary()
+    if conv.args.normalize:
+        conv.normalize_loudness()
+    if conv.args.cuts:
+        conv.create_cuts()
