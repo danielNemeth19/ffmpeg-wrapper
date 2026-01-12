@@ -54,7 +54,7 @@ DEFAULT_RE_ENCODE_OPTS = [
 ]
 
 
-class FileInfo(TypedDict):
+class FileBatchInfo(TypedDict):
     count: int
     audio_bitrate: int
     original_files: list[Path]
@@ -147,8 +147,8 @@ class Converter:
     def get_new_file_name(filename_base: Path, lufs_value: float, index: int) -> str:
         return Path(f"{filename_base}_lufs{int(lufs_value)}_{index:03d}").with_suffix(".mp4").as_posix()
 
-    def create_file_map(self) -> dict[str, FileInfo]:
-        file_map: dict[str, FileInfo] = {}
+    def create_file_map(self) -> dict[str, FileBatchInfo]:
+        file_map: dict[str, FileBatchInfo] = {}
         for item in Path(self.source_path).glob(self.pattern):
             original_fn = Path(item)
             stem = self.sanitize_file_name(item.name)
