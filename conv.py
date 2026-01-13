@@ -63,6 +63,13 @@ class FileBatchInfo(TypedDict):
     done: bool
 
 
+class FileCutInfo(TypedDict):
+    stem_index: int
+    duration: int
+    segments: int
+    done: bool
+
+
 class Converter:
     def __init__(self, envs: OrderedDict[str, str], args: argparse.Namespace):
         self._validate_args(args)
@@ -101,6 +108,8 @@ class Converter:
     def _set_file_map(self):
         if self.args.check_loudness or self.args.normalize:
             return self.create_file_map()
+        if self.args.cuts:
+            return self.create_file_cut_map()
         return None
 
     def _validate_args(self, args):
@@ -162,7 +171,7 @@ class Converter:
                     'new_files': [
                         self.get_new_file_name(
                             filename_base=new_fn_base, lufs_value=self.args.lufs, index=count
-                            )
+                        )
                     ],
                     'target_lufs': self.args.lufs,
                     'done': False
@@ -210,17 +219,18 @@ class Converter:
                     "null",
                     "-"
                 ]
-                __logger__.debug(command)
-                try:
-                    raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
-                    summary = self.parse_loudnorm_summary(raw_output.stderr)
-                    diff_from_target = summary["input_i"] - self.args.lufs
-                    __logger__.info(
-                        "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
-                        input_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
-                    )
-                except subprocess.CalledProcessError as exc:
-                    __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+                __logger__.info(command)
+                if not self.dry_run:
+                    try:
+                        raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
+                        summary = self.parse_loudnorm_summary(raw_output.stderr)
+                        diff_from_target = summary["input_i"] - self.args.lufs
+                        __logger__.info(
+                            "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
+                            input_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
+                        )
+                    except subprocess.CalledProcessError as exc:
+                        __logger__.error("Error converting %s: %s", input_file, exc.stderr)
 
     def normalize_loudness(self):
         for video, video_data in self.file_map.items():
@@ -248,7 +258,8 @@ class Converter:
                 __logger__.info(command)
                 if not self.dry_run:
                     try:
-                        subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        subprocess.run(command, text=True, check=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                         __logger__.info("%s -> %s converted", input_file, new_file)
                     except subprocess.CalledProcessError as exc:
                         __logger__.error("Error converting %s: %s", input_file, exc.stderr)
@@ -316,11 +327,33 @@ class Converter:
                 __logger__.info(command)
                 if not self.dry_run:
                     try:
-                        subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        subprocess.run(command, text=True, check=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                         __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
                     except subprocess.CalledProcessError as exc:
                         __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
                 current_ss += self.args.cuts
+
+    def create_file_cut_map(self):
+        mapper = {}
+
+        file_map: dict[str, FileCutInfo] = {}
+        for item in Path(self.source_path).glob(self.pattern):
+            stem = self.sanitize_file_name(item.name)
+            stem_index = mapper.get(stem, 0) + 1
+            mapper[stem] = stem_index
+            new_stem_base = f"{stem}-{stem_index}"
+            duration = self.extract_duration(item)
+            segments = math.ceil(duration / self.args.cuts)
+
+            if new_stem_base not in file_map:
+                file_map[new_stem_base] = {
+                    'stem_index': stem_index,
+                    'fn_base': Path(self.target_path, new_stem_base),
+                    'duration': duration,
+                    'segments': segments
+                }
+        print(file_map)
 
 
 def get_args() -> argparse.Namespace:
@@ -363,5 +396,5 @@ if __name__ == "__main__":
         conv.get_loudnorm_summary()
     if conv.args.normalize:
         conv.normalize_loudness()
-    if conv.args.cuts:
-        conv.create_cuts()
+    # if conv.args.cuts:
+        # conv.create_cuts()
