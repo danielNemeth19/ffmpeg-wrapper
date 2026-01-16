@@ -64,6 +64,7 @@ class FileBatchInfo(TypedDict):
 
 
 class FileCutInfo(TypedDict):
+    original_file: Path
     stem_index: int
     duration: int
     segments: int
@@ -309,7 +310,7 @@ class Converter:
             raise
         return float(duration)
 
-    def create_cuts(self):
+    def create_cuts_old(self):
         for item in Path(self.source_path).glob(self.pattern):
             __logger__.info("Processing  %s", item.as_posix())
             duration = self.extract_duration(item)
@@ -334,6 +335,27 @@ class Converter:
                         __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
                 current_ss += self.args.cuts
 
+    def create_cuts(self):
+        for _, video_data in self.file_map.items():
+            __logger__.info("Duration: %f - will make %d cuts", video_data['duration'], video_data['segments'])
+            current_ss = 0
+            for i in range(video_data['segments']):
+                command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
+                command.extend(["-i", video_data['original_file']])
+                opts = DEFAULT_RE_ENCODE_OPTS if self.args.re_encode else ["-c", "copy"]
+                command.extend(opts)
+                command.append(f"{video_data['fn_base']}-{i:03d}.mp4")
+                __logger__.info(command)
+                if not self.dry_run:
+                    try:
+                        subprocess.run(
+                            command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+                        )
+                        __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
+                    except subprocess.CalledProcessError as exc:
+                        __logger__.error("Error converting %s: %s", video_data['original_file'], exc.stderr)
+                current_ss += self.args.cuts
+
     def create_file_cut_map(self):
         mapper = {}
 
@@ -348,12 +370,13 @@ class Converter:
 
             if new_stem_base not in file_map:
                 file_map[new_stem_base] = {
+                    'original_file': item.as_posix(),
                     'stem_index': stem_index,
                     'fn_base': Path(self.target_path, new_stem_base),
                     'duration': duration,
                     'segments': segments
                 }
-        print(file_map)
+        return file_map
 
 
 def get_args() -> argparse.Namespace:
@@ -396,5 +419,5 @@ if __name__ == "__main__":
         conv.get_loudnorm_summary()
     if conv.args.normalize:
         conv.normalize_loudness()
-    # if conv.args.cuts:
-        # conv.create_cuts()
+    if conv.args.cuts:
+        conv.create_cuts()
