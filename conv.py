@@ -64,7 +64,7 @@ class FileBatchInfo(TypedDict):
 
 
 class FileCutInfo(TypedDict):
-    original_file: Path
+    # original_file: Path
     stem_index: int
     duration: int
     segments: int
@@ -310,41 +310,16 @@ class Converter:
             raise
         return float(duration)
 
-    def create_cuts_old(self):
-        for item in Path(self.source_path).glob(self.pattern):
-            __logger__.info("Processing  %s", item.as_posix())
-            duration = self.extract_duration(item)
-            segments = math.ceil(duration / self.args.cuts)
-            __logger__.info("Duration: %f - will make %d cuts", duration, segments)
-            stem = self.sanitize_file_name(item.name)
-            new_fn_base = Path(self.target_path, stem)
-            current_ss = 0
-            for i in range(segments):
-                command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
-                command.extend(["-i", item.as_posix()])
-                opts = DEFAULT_RE_ENCODE_OPTS if self.args.re_encode else ["-c", "copy"]
-                command.extend(opts)
-                command.append(f"{new_fn_base}-{i:03d}.mp4")
-                __logger__.info(command)
-                if not self.dry_run:
-                    try:
-                        subprocess.run(command, text=True, check=True,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                        __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
-                    except subprocess.CalledProcessError as exc:
-                        __logger__.error("Error converting %s: %s", item.as_posix(), exc.stderr)
-                current_ss += self.args.cuts
-
     def create_cuts(self):
-        for _, video_data in self.file_map.items():
-            __logger__.info("Duration: %f - will make %d cuts", video_data['duration'], video_data['segments'])
+        for media, media_data in self.file_map.items():
+            __logger__.info("Duration: %f - will make %d cuts", media_data['duration'], media_data['segments'])
             current_ss = 0
-            for i in range(video_data['segments']):
+            for i in range(media_data['segments']):
                 command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
-                command.extend(["-i", video_data['original_file']])
+                command.extend(["-i", media])
                 opts = DEFAULT_RE_ENCODE_OPTS if self.args.re_encode else ["-c", "copy"]
                 command.extend(opts)
-                command.append(f"{video_data['fn_base']}-{i:03d}.mp4")
+                command.append(f"{media_data['fn_base']}-{i:03d}.mp4")
                 __logger__.info(command)
                 if not self.dry_run:
                     try:
@@ -353,7 +328,7 @@ class Converter:
                         )
                         __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
                     except subprocess.CalledProcessError as exc:
-                        __logger__.error("Error converting %s: %s", video_data['original_file'], exc.stderr)
+                        __logger__.error("Error converting %s: %s", media, exc.stderr)
                 current_ss += self.args.cuts
 
     def create_file_cut_map(self):
@@ -369,8 +344,7 @@ class Converter:
             segments = math.ceil(duration / self.args.cuts)
 
             if new_stem_base not in file_map:
-                file_map[new_stem_base] = {
-                    'original_file': item.as_posix(),
+                file_map[item.as_posix()] = {
                     'stem_index': stem_index,
                     'fn_base': Path(self.target_path, new_stem_base),
                     'duration': duration,
