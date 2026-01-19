@@ -64,7 +64,6 @@ class FileBatchInfo(TypedDict):
 
 
 class FileCutInfo(TypedDict):
-    # original_file: Path
     stem_index: int
     duration: int
     segments: int
@@ -330,6 +329,12 @@ class Converter:
                     except subprocess.CalledProcessError as exc:
                         __logger__.error("Error converting %s: %s", media, exc.stderr)
                 current_ss += self.args.cuts
+
+    def calculate_segments(self, duration: int) -> int:
+        quotient, remainder = divmod(duration, self.args.cuts)
+        if remainder < self.args.cuts * 0.7:
+            return quotient
+        return quotient + 1
 
     def create_file_cut_map(self):
         mapper = {}

@@ -19,7 +19,7 @@ class TestConvert(unittest.TestCase):
             pattern="test",
             check_loudness=False,
             normalize=False,
-            cuts=180,
+            cuts=10,
             re_encode=False,
             clear_first=False,
             dry_run=False
@@ -57,6 +57,30 @@ class TestConvert(unittest.TestCase):
                 setattr(self.default_ns, "pattern", pattern)
                 conv = Converter(self.default_env, self.default_ns)
                 self.assertEqual(conv.pattern, normalized)
+
+    def test_calculating_segments(self):
+        segment_map = [
+            {
+                "duration": 106,
+                "expected": 10,
+            },
+            {
+                "duration": 107,
+                "expected": 11,
+            },
+            {
+                "duration": 108,
+                "expected": 11,
+            },
+            {
+                "duration": 109,
+                "expected": 11,
+            }
+        ]
+        for media in segment_map:
+            with self.subTest(original=media['duration'], expected=media['expected']):
+                segment = self.converter.calculate_segments(media['duration'])
+                self.assertEqual(segment, media['expected'])
 
     def test_sanitize_file_name(self):
         fns = [
