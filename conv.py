@@ -311,7 +311,6 @@ class Converter:
 
     def create_cuts(self):
         for media, media_data in self.file_map.items():
-            __logger__.info("Duration: %f - will make %d cuts", media_data['duration'], media_data['segments'])
             current_ss = 0
             for i in range(media_data['segments']):
                 command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
@@ -333,8 +332,9 @@ class Converter:
     def calculate_segments(self, duration: int) -> int:
         quotient, remainder = divmod(duration, self.args.cuts)
         if remainder < self.args.cuts * 0.7:
-            return quotient
-        return quotient + 1
+            __logger__.info("Dropping remainder, duration is: %f seconds", remainder)
+            return int(quotient)
+        return int(quotient + 1)
 
     def create_file_cut_map(self):
         mapper = {}
@@ -346,7 +346,9 @@ class Converter:
             mapper[stem] = stem_index
             new_stem_base = f"{stem}-{stem_index}"
             duration = self.extract_duration(item)
-            segments = math.ceil(duration / self.args.cuts)
+            __logger__.info("Duration: %f", duration)
+            segments = self.calculate_segments(duration)
+            __logger__.info("Will make %d cuts", segments)
 
             if new_stem_base not in file_map:
                 file_map[item.as_posix()] = {
