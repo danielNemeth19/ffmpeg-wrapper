@@ -1,6 +1,8 @@
 from argparse import Namespace
+from pathlib import Path
 import unittest
 from unittest.mock import patch
+import subprocess
 
 from conv import Converter
 
@@ -41,6 +43,15 @@ class TestConvert(unittest.TestCase):
     def test_paths_are_set_correctly(self):
         self.assertEqual(self.converter.source_path, "/home/user/Videos")
         self.assertEqual(self.converter.target_path, "/home/user/Videos/done")
+
+    def test_pattern_normalized_based_on_pattern(self):
+        converter = Converter(self.default_env, Namespace(
+            pattern="", check_loudness=False, normalize=False,
+            cuts=None, dry_run=False, clear_first=False
+        ))
+        self.assertEqual(converter.pattern, "*.mp4")
+
+        self.assertEqual(self.converter.pattern, "*test*.mp4")
 
     @patch("pathlib.Path.mkdir")
     def test_paths_are_set_correctly_with_creating_target_folder_if_needed(self, mock_make):
@@ -105,6 +116,49 @@ class TestConvert(unittest.TestCase):
                 cov = Converter(self.default_env, self.default_ns)
                 got = cov.sanitize_file_name(original)
                 self.assertEqual(got, expected)
+
+    def test_extract_duration(self):
+        mf = Path("/home/user/Videos/my_video.mp4")
+        with patch("subprocess.run") as mocked_subprocess:
+            self.converter.extract_duration(mf)
+        expected_args = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            mf.as_posix()
+        ]
+        mocked_subprocess.assert_called_once_with(
+            expected_args,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+    def test_extract_duration_error(self):
+        mf = Path("/home/user/Videos/my_video.mp4")
+        with patch("subprocess.run") as mocked_subprocess:
+            mocked_subprocess.side_effect = subprocess.CalledProcessError()
+            self.converter.extract_duration(mf)
+        expected_args = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            mf.as_posix()
+        ]
+        mocked_subprocess.assert_called_once_with(
+            expected_args,
+            check=True,
+            capture_output=True,
+            text=True
+        )
 
     def test_get_new_file_name(self):
         fn_base = "my_track"
