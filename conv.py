@@ -1,6 +1,6 @@
+from copy import deepcopy
 import sys
 import argparse
-import math
 import json
 import logging
 import subprocess
@@ -51,6 +51,29 @@ DEFAULT_RE_ENCODE_OPTS = [
     "-ar", "48000",
     "-ac", "2",
     "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+]
+
+DURATION_OPTS = [
+    "ffprobe",
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+]
+
+
+AUDIO_BITRATE_OPTS = [
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "a:0",
+    "-show_entries",
+    "stream=bit_rate",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
 ]
 
 
@@ -269,18 +292,8 @@ class Converter:
 
     @staticmethod
     def extract_audio_bitrate(file_object: Path) -> int:
-        command = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=bit_rate",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            file_object.as_posix()
-        ]
+        command = deepcopy(AUDIO_BITRATE_OPTS)
+        command.append(file_object.as_posix())
         try:
             raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
             bitrate = raw_bit_rate.stdout.strip()
@@ -291,16 +304,8 @@ class Converter:
 
     @staticmethod
     def extract_duration(file_object: Path) -> int:
-        command = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            file_object.as_posix()
-        ]
+        command = deepcopy(DURATION_OPTS)
+        command.append(file_object.as_posix())
         try:
             raw_duration = subprocess.run(command, check=True, capture_output=True, text=True)
             duration = raw_duration.stdout.strip()

@@ -1,17 +1,21 @@
 from argparse import Namespace
+import logging
 from pathlib import Path
 import unittest
 from unittest.mock import patch
 import subprocess
 
 from conv import Converter
+from conv import __logger__
 
 
 class TestConvert(unittest.TestCase):
     def setUp(self):
-        self.path_exists_pather = patch("pathlib.Path.exists")
-        self.path_exists = self.path_exists_pather.start()
+        self.path_exists_patcher = patch("pathlib.Path.exists")
+        self.path_exists = self.path_exists_patcher.start()
         self.path_exists.return_value = True
+        self.subprocess_patcher = patch("subprocess.run")
+        self.subprocess_run_patch = self.subprocess_patcher.start()
         self.default_env = {
             "SOURCE": "/home/user/Videos",
             "TARGET": "/home/user/Videos/done"
@@ -28,6 +32,7 @@ class TestConvert(unittest.TestCase):
         )
         self.converter = Converter(self.default_env, self.default_ns)
         self.addCleanup(self.path_exists.stop)
+        self.addCleanup(self.subprocess_patcher.stop)
 
     def test_set_source_path_raises_error(self):
         with self.assertRaises(SystemExit) as cm:
@@ -117,10 +122,41 @@ class TestConvert(unittest.TestCase):
                 got = cov.sanitize_file_name(original)
                 self.assertEqual(got, expected)
 
+    def test_extracting_audio_bitrate(self):
+        fp = Path("/home/user/Videos/my_video.mp4")
+        self.converter.extract_audio_bitrate(fp)
+        expected_args = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=bit_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            fp.as_posix()
+        ]
+        self.subprocess_run_patch.assert_called_once_with(
+            expected_args,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+    def test_extract_audio_bitrate_error(self):
+        fp = Path("/home/user/Videos/my_video.mp4")
+        with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertLogs(__logger__.name, level=logging.ERROR) as cm:
+                self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(
+                    returncode=1, cmd=["test"], stderr="error raised"
+                )
+                self.converter.extract_audio_bitrate(fp)
+        self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting bitrate from {fp.as_posix()}: error raised")
+
     def test_extract_duration(self):
-        mf = Path("/home/user/Videos/my_video.mp4")
-        with patch("subprocess.run") as mocked_subprocess:
-            self.converter.extract_duration(mf)
+        fp = Path("/home/user/Videos/my_video.mp4")
+        self.converter.extract_duration(fp)
         expected_args = [
             "ffprobe",
             "-v",
@@ -129,9 +165,9 @@ class TestConvert(unittest.TestCase):
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            mf.as_posix()
+            fp.as_posix()
         ]
-        mocked_subprocess.assert_called_once_with(
+        self.subprocess_run_patch.assert_called_once_with(
             expected_args,
             check=True,
             capture_output=True,
@@ -139,26 +175,14 @@ class TestConvert(unittest.TestCase):
         )
 
     def test_extract_duration_error(self):
-        mf = Path("/home/user/Videos/my_video.mp4")
-        with patch("subprocess.run") as mocked_subprocess:
-            mocked_subprocess.side_effect = subprocess.CalledProcessError()
-            self.converter.extract_duration(mf)
-        expected_args = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            mf.as_posix()
-        ]
-        mocked_subprocess.assert_called_once_with(
-            expected_args,
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        fp = Path("/home/user/Videos/my_video.mp4")
+        with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertLogs(__logger__.name, level=logging.ERROR) as cm:
+                self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(
+                    returncode=1, cmd=["test"], stderr="error raised"
+                )
+                self.converter.extract_duration(fp)
+        self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting duration from {fp.as_posix()}: error raised")
 
     def test_get_new_file_name(self):
         fn_base = "my_track"
