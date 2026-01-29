@@ -124,7 +124,7 @@ class TestConvert(unittest.TestCase):
 
     def test_extracting_audio_bitrate(self):
         fp = Path("/home/user/Videos/my_video.mp4")
-        self.converter.extract_audio_bitrate(fp)
+        self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
         expected_args = [
             "ffprobe",
             "-v",
@@ -151,12 +151,13 @@ class TestConvert(unittest.TestCase):
                 self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(
                     returncode=1, cmd=["test"], stderr="error raised"
                 )
-                self.converter.extract_audio_bitrate(fp)
-        self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting bitrate from {fp.as_posix()}: error raised")
+                self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
+        self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting audio_bitrate from {
+                         fp.as_posix()}: error raised")
 
     def test_extract_duration(self):
         fp = Path("/home/user/Videos/my_video.mp4")
-        self.converter.extract_duration(fp)
+        self.converter.extract_metadata(datapoint="duration", file_object=fp)
         expected_args = [
             "ffprobe",
             "-v",
@@ -181,7 +182,7 @@ class TestConvert(unittest.TestCase):
                 self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(
                     returncode=1, cmd=["test"], stderr="error raised"
                 )
-                self.converter.extract_duration(fp)
+                self.converter.extract_metadata(datapoint="duration", file_object=fp)
         self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting duration from {fp.as_posix()}: error raised")
 
     def test_get_new_file_name(self):
@@ -190,6 +191,20 @@ class TestConvert(unittest.TestCase):
         index = 2
         new_file_name = self.converter.get_new_file_name(fn_base, lufs_target, index)
         self.assertEqual(new_file_name, "my_track_lufs-23_002.mp4")
+
+    def test_creating_file_map(self):
+        with patch("pathlib.Path.glob") as mock_glob:
+            mock_glob.return_value = self._yield_next_path()
+            file_map = self.converter.create_file_map()
+        self.assertIn("my_vid", file_map)
+        media_data = file_map["my_vid"]
+        self.assertEqual(media_data["count"], 2)
+        self.assertEqual(media_data["audio_bitrate"], 0)
+        self.assertEqual(media_data["target_lufs"], "-16")
+
+    @staticmethod
+    def _yield_next_path():
+        return (Path(i) for i in ["/home/Videos/my_vid_001.mp4", "/home/Videos/my_vid_002.mp4"])
 
     def test_parsing_loudnorm_summary(self):
         summary = self._get_example_output()

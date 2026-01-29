@@ -10,35 +10,6 @@ from collections import OrderedDict
 
 from dotenv import dotenv_values
 
-# ```
-# ffmpeg -i input.mp4 -c:v copy -filter:a "loudnorm=I=-16:TP=-1.5:LRA=7:linear=true" output.mp4
-# ```
-# - I=-16 -> Target integrated loudness: -16 LUFS (good for speech, matches YouTube and streaming standards).
-# - TP=-1.5 -> True peak limit: -1.5 dBTP (prevents digital clipping).
-# - LRA=7 -> Loudness range: 7 LU (keeps dynamics natural but not too wide for speech).
-# - linear=true -> Use linear normalization (better for speach)
-
-# To **formalize** (normalize) all your videos for concatenation, you should:
-# - **Re-encode both video and audio** to a common format, resolution, frame rate, and audio settings.
-# - Apply the `loudnorm` filter to the audio.
-# **Recommended ffmpeg command:**
-# ```
-# ffmpeg -i input.mp4 \
-# -vf "scale=1280:720,fps=30" \
-# -c:v libx264 -preset fast -crf 23 \
-# -c:a aac -b:a 192k -ar 48000 -ac 2 \
-# -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
-# output.mp4
-
-# cutting
-# ffmpeg -ss 00:01:23 -i input.mp4 \
-# -vf "scale=1280:720,fps=30" \
-# -c:v libx264 -preset fast -crf 23 \
-# -c:a aac -b:a 192k -ar 48000 -ac 2 \
-# -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
-# -t 30 \
-# output.mp4
-
 
 logging.basicConfig(level=logging.INFO)
 __logger__ = logging.getLogger("converter")
@@ -208,6 +179,7 @@ class Converter:
                 )
                 file_map[stem]['new_files'].append(new_file)
         __logger__.info("Found %d files", len(file_map.keys()))
+        print("file map: ", file_map)
         return file_map
 
     @staticmethod
@@ -260,7 +232,7 @@ class Converter:
             __logger__.info("Processing: %s", video)
             for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
                 if not video_data["audio_bitrate"]:
-                    bitrate = self.extract_audio_bitrate(input_file)
+                    bitrate = self.extract_metadata(datapoint="audio_bitrate", file_object=input_file)
                     video_data["audio_bitrate"] = bitrate
                     __logger__.info("Got audio bit_rate for: %s -- %s", input_file, bitrate)
                 command = [
@@ -290,29 +262,21 @@ class Converter:
             video_data['done'] = True
             __logger__.info("Setting video data: %s", video_data['done'])
 
-    @staticmethod
-    def extract_audio_bitrate(file_object: Path) -> int:
-        command = deepcopy(AUDIO_BITRATE_OPTS)
-        command.append(file_object.as_posix())
-        try:
-            raw_bit_rate = subprocess.run(command, check=True, capture_output=True, text=True)
-            bitrate = raw_bit_rate.stdout.strip()
-        except subprocess.CalledProcessError as exc:
-            __logger__.error("Error extracting bitrate from %s: %s", file_object, exc.stderr)
-            raise
-        return int(bitrate)
-
-    @staticmethod
-    def extract_duration(file_object: Path) -> int:
-        command = deepcopy(DURATION_OPTS)
+    def extract_metadata(self, datapoint: str, file_object: Path) -> int:
+        command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
         try:
             raw_duration = subprocess.run(command, check=True, capture_output=True, text=True)
             duration = raw_duration.stdout.strip()
         except subprocess.CalledProcessError as exc:
-            __logger__.error("Error extracting duration from %s: %s", file_object, exc.stderr)
+            __logger__.error("Error extracting %s from %s: %s", datapoint, file_object, exc.stderr)
             raise
         return float(duration)
+
+    @staticmethod
+    def _get_extract_command(datapoint: str) -> list:
+        command = DURATION_OPTS if datapoint == "duration" else AUDIO_BITRATE_OPTS
+        return deepcopy(command)
 
     def create_cuts(self):
         for media, media_data in self.file_map.items():
@@ -350,8 +314,8 @@ class Converter:
             stem_index = mapper.get(stem, 0) + 1
             mapper[stem] = stem_index
             new_stem_base = f"{stem}-{stem_index}"
-            duration = self.extract_duration(item)
-            __logger__.info("Duration: %f", duration)
+            duration = self.extract_metadata(datapoint="duration", file_object=item)
+            __logger__.info("Duration of %s: %f", item.name, duration)
             segments = self.calculate_segments(duration)
             __logger__.info("Will make %d cuts", segments)
 
