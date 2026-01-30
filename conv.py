@@ -179,7 +179,6 @@ class Converter:
                 )
                 file_map[stem]['new_files'].append(new_file)
         __logger__.info("Found %d files", len(file_map.keys()))
-        print("file map: ", file_map)
         return file_map
 
     @staticmethod

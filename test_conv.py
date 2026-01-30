@@ -9,6 +9,11 @@ from conv import Converter
 from conv import __logger__
 
 
+class CompletedProcessStub:
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
 class TestConvert(unittest.TestCase):
     def setUp(self):
         self.path_exists_patcher = patch("pathlib.Path.exists")
@@ -201,6 +206,32 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(media_data["count"], 2)
         self.assertEqual(media_data["audio_bitrate"], 0)
         self.assertEqual(media_data["target_lufs"], "-16")
+
+    def test_creating_file_cut_map(self):
+        vid_1_duration = CompletedProcessStub(stdout="60.5")
+        vid_2_duration = CompletedProcessStub(stdout="70.5")
+
+        self.subprocess_run_patch.side_effect = [vid_1_duration, vid_2_duration]
+        with patch("pathlib.Path.glob") as mock_glob:
+            mock_glob.return_value = self._yield_next_path()
+            file_cut_map = self.converter.create_file_cut_map()
+        self.assertIn("/home/Videos/my_vid_001.mp4", file_cut_map)
+        self.assertIn("/home/Videos/my_vid_002.mp4", file_cut_map)
+
+        media_data_1 = file_cut_map["/home/Videos/my_vid_001.mp4"]
+        self.assertEqual(media_data_1, {
+            'stem_index': 1,
+            'fn_base': Path('/home/user/Videos/done/my_vid-1'),
+            'duration': 60.5,
+            'segments': 6
+        })
+        media_data_2 = file_cut_map["/home/Videos/my_vid_002.mp4"]
+        self.assertEqual(media_data_2, {
+            'stem_index': 2,
+            'fn_base': Path('/home/user/Videos/done/my_vid-2'),
+            'duration': 70.5,
+            'segments': 7
+        })
 
     @staticmethod
     def _yield_next_path():
