@@ -71,7 +71,6 @@ class Converter:
         self.source_path = self._set_source_path(envs)
         self.target_path = self._set_target_path(envs)
         self.pattern = self._normalize_pattern()
-        self.file_map = self._set_file_map()
         self.dry_run = args.dry_run
         self.clear_target_directory()
 
@@ -98,13 +97,6 @@ class Converter:
         if not self.args.pattern:
             return "*.mp4"
         return f"*{self.args.pattern}*.mp4"
-
-    def _set_file_map(self):
-        if self.args.check_loudness or self.args.normalize:
-            return self.create_file_map()
-        if self.args.cuts:
-            return self.create_file_cut_map()
-        return None
 
     def _validate_args(self, args):
         return
@@ -160,7 +152,7 @@ class Converter:
                 count = 1
                 file_map[stem] = {
                     'count': count,
-                    'audio_bitrate': 0,
+                    'audio_bitrate': self.extract_metadata(datapoint="audio_bitrate", file_object=original_fn),
                     'original_files': [original_fn],
                     'new_files': [
                         self.get_new_file_name(
@@ -178,7 +170,7 @@ class Converter:
                     filename_base=new_fn_base, lufs_value=self.args.lufs, index=count
                 )
                 file_map[stem]['new_files'].append(new_file)
-        __logger__.info("Found %d files", len(file_map.keys()))
+        __logger__.info("Found %d unique stems", len(file_map.keys()))
         return file_map
 
     @staticmethod
@@ -199,8 +191,8 @@ class Converter:
                 summary[key] = float(value)
         return summary
 
-    def get_loudnorm_summary(self):
-        for video, video_data in self.file_map.items():
+    def get_loudnorm_summary(self, file_map: dict[str, FileBatchInfo]):
+        for video, video_data in file_map.items():
             __logger__.info("Processing: %s", video)
             for input_file in video_data["original_files"]:
                 command = [
@@ -226,19 +218,15 @@ class Converter:
                     except subprocess.CalledProcessError as exc:
                         __logger__.error("Error converting %s: %s", input_file, exc.stderr)
 
-    def normalize_loudness(self):
-        for video, video_data in self.file_map.items():
+    def normalize_loudness(self, file_map: dict[str, FileBatchInfo]):
+        for video, video_data in file_map.items():
             __logger__.info("Processing: %s", video)
-            for input_file, new_file in zip(video_data["original_files"], video_data["new_files"]):
-                if not video_data["audio_bitrate"]:
-                    bitrate = self.extract_metadata(datapoint="audio_bitrate", file_object=input_file)
-                    video_data["audio_bitrate"] = bitrate
-                    __logger__.info("Got audio bit_rate for: %s -- %s", input_file, bitrate)
+            for infile, outfile in zip(video_data["original_files"], video_data["new_files"]):
                 command = [
                     "ffmpeg",
                     "-y",
                     "-i",
-                    input_file.as_posix(),
+                    infile.as_posix(),
                     "-c:v",
                     "copy",
                     "-af",
@@ -247,16 +235,15 @@ class Converter:
                     "aac",
                     "-b:a",
                     str(video_data["audio_bitrate"]),
-                    new_file
+                    outfile
                 ]
                 __logger__.info(command)
                 if not self.dry_run:
                     try:
-                        subprocess.run(command, text=True, check=True,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                        __logger__.info("%s -> %s converted", input_file, new_file)
+                        subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        __logger__.info("%s -> %s converted", infile, outfile)
                     except subprocess.CalledProcessError as exc:
-                        __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+                        __logger__.error("Error converting %s: %s", infile, exc.stderr)
                         video_data['done'] = False
             video_data['done'] = True
             __logger__.info("Setting video data: %s", video_data['done'])
@@ -265,12 +252,13 @@ class Converter:
         command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
         try:
-            raw_duration = subprocess.run(command, check=True, capture_output=True, text=True)
-            duration = raw_duration.stdout.strip()
+            raw_metadata = subprocess.run(command, check=True, capture_output=True, text=True)
+            metadata = raw_metadata.stdout.strip()
+            __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
         except subprocess.CalledProcessError as exc:
             __logger__.error("Error extracting %s from %s: %s", datapoint, file_object, exc.stderr)
             raise
-        return float(duration)
+        return float(metadata)
 
     @staticmethod
     def _get_extract_command(datapoint: str) -> list:
@@ -330,7 +318,7 @@ class Converter:
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Batch adjust audio volume and re-encode MP4 files."
+        description="Batch adjust audio volume, re-encode and cut MP4 files."
     )
     parser.add_argument(
         "-l", "--lufs", type=float, help="Target integrated loudness in LUFS", default="-16"
@@ -364,9 +352,12 @@ if __name__ == "__main__":
     envs = dotenv_values()
     args = get_args()
     conv = Converter(envs=envs, args=args)
-    if conv.args.check_loudness:
-        conv.get_loudnorm_summary()
-    if conv.args.normalize:
-        conv.normalize_loudness()
-    if conv.args.cuts:
-        conv.create_cuts()
+    # TODO: rationalize - loudness check and normalize both acts on file_map (FileBatchInfo)
+    if conv.args.check_loudness or conv.args.normalize:
+        file_map = conv.create_file_map()
+        if conv.args.check_loudness:
+            conv.get_loudnorm_summary(file_map)
+        if conv.args.normalize:
+            conv.normalize_loudness(file_map)
+    # if conv.args.cuts:
+        # conv.create_cuts()

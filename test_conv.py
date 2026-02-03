@@ -127,6 +127,28 @@ class TestConvert(unittest.TestCase):
                 got = cov.sanitize_file_name(original)
                 self.assertEqual(got, expected)
 
+    def test_get_loudnorm_summary(self):
+        fp = Path("/home/user/Videos/my_video.mp4")
+        self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
+        expected_args = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=bit_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            fp.as_posix()
+        ]
+        self.subprocess_run_patch.assert_called_once_with(
+            expected_args,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
     def test_extracting_audio_bitrate(self):
         fp = Path("/home/user/Videos/my_video.mp4")
         self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
@@ -200,6 +222,7 @@ class TestConvert(unittest.TestCase):
     def test_creating_file_map(self):
         with patch("pathlib.Path.glob") as mock_glob:
             mock_glob.return_value = self._yield_next_path()
+            breakpoint()
             file_map = self.converter.create_file_map()
         self.assertIn("my_vid", file_map)
         media_data = file_map["my_vid"]
