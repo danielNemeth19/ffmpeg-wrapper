@@ -220,14 +220,15 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(new_file_name, "my_track_lufs-23_002.mp4")
 
     def test_creating_file_map(self):
+        media_audio_bitrate = CompletedProcessStub(stdout="192000")
+        self.subprocess_run_patch.return_value = media_audio_bitrate
         with patch("pathlib.Path.glob") as mock_glob:
             mock_glob.return_value = self._yield_next_path()
-            breakpoint()
             file_map = self.converter.create_file_map()
         self.assertIn("my_vid", file_map)
         media_data = file_map["my_vid"]
         self.assertEqual(media_data["count"], 2)
-        self.assertEqual(media_data["audio_bitrate"], 0)
+        self.assertEqual(media_data["audio_bitrate"], 192000)
         self.assertEqual(media_data["target_lufs"], "-16")
 
     def test_creating_file_cut_map(self):

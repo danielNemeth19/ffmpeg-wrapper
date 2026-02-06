@@ -191,37 +191,36 @@ class Converter:
                 summary[key] = float(value)
         return summary
 
-    def get_loudnorm_summary(self, file_map: dict[str, FileBatchInfo]):
-        for video, video_data in file_map.items():
-            __logger__.info("Processing: %s", video)
-            for input_file in video_data["original_files"]:
-                command = [
-                    "ffmpeg",
-                    "-i",
-                    input_file.as_posix(),
-                    "-af",
-                    f"loudnorm=I={self.args.lufs}:TP=-1.5:LRA=11:print_format=json",
-                    "-f",
-                    "null",
-                    "-"
-                ]
-                __logger__.info(command)
-                if not self.dry_run:
-                    try:
-                        raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
-                        summary = self.parse_loudnorm_summary(raw_output.stderr)
-                        diff_from_target = summary["input_i"] - self.args.lufs
-                        __logger__.info(
-                            "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
-                            input_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
-                        )
-                    except subprocess.CalledProcessError as exc:
-                        __logger__.error("Error converting %s: %s", input_file, exc.stderr)
+    def get_loudnorm_summary(self, media_file):
+        __logger__.info("Processing: %s", media_file.as_posix())
+        command = [
+            "ffmpeg",
+            "-i",
+            media_file.as_posix(),
+            "-af",
+            f"loudnorm=I={self.args.lufs}:TP=-1.5:LRA=11:print_format=json",
+            "-f",
+            "null",
+            "-"
+        ]
+        __logger__.info(command)
+        try:
+            raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
+            summary = self.parse_loudnorm_summary(raw_output.stderr)
+            diff_from_target = summary["input_i"] - self.args.lufs
+            __logger__.info(
+                "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
+                media_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
+            )
+        except subprocess.CalledProcessError as exc:
+            __logger__.error("Error converting %s: %s", media_file.as_posix(), exc.stderr)
 
-    def normalize_loudness(self, file_map: dict[str, FileBatchInfo]):
+    def audio_processing(self, file_map: dict[str, FileBatchInfo]):
         for video, video_data in file_map.items():
             __logger__.info("Processing: %s", video)
             for infile, outfile in zip(video_data["original_files"], video_data["new_files"]):
+                if self.args.check_loudness:
+                    self.get_loudnorm_summary(infile)
                 command = [
                     "ffmpeg",
                     "-y",
@@ -355,9 +354,9 @@ if __name__ == "__main__":
     # TODO: rationalize - loudness check and normalize both acts on file_map (FileBatchInfo)
     if conv.args.check_loudness or conv.args.normalize:
         file_map = conv.create_file_map()
-        if conv.args.check_loudness:
-            conv.get_loudnorm_summary(file_map)
-        if conv.args.normalize:
-            conv.normalize_loudness(file_map)
+        # if conv.args.check_loudness:
+            # conv.get_loudnorm_summary(file_map)
+        # if conv.args.normalize:
+        conv.audio_processing(file_map)
     # if conv.args.cuts:
         # conv.create_cuts()
