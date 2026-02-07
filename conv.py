@@ -192,7 +192,7 @@ class Converter:
         return summary
 
     def get_loudnorm_summary(self, media_file):
-        __logger__.info("Processing: %s", media_file.as_posix())
+        __logger__.info("Processing loudness summary for: %s", media_file.as_posix())
         command = [
             "ffmpeg",
             "-i",
@@ -203,17 +203,13 @@ class Converter:
             "null",
             "-"
         ]
-        __logger__.info(command)
-        try:
-            raw_output = subprocess.run(command, text=True, check=True, capture_output=True)
-            summary = self.parse_loudnorm_summary(raw_output.stderr)
-            diff_from_target = summary["input_i"] - self.args.lufs
-            __logger__.info(
-                "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
-                media_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
-            )
-        except subprocess.CalledProcessError as exc:
-            __logger__.error("Error converting %s: %s", media_file.as_posix(), exc.stderr)
+        raw_output = self._run_command(command)
+        summary = self.parse_loudnorm_summary(raw_output.stderr)
+        diff_from_target = summary["input_i"] - self.args.lufs
+        __logger__.info(
+            "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
+            media_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
+        )
 
     def audio_processing(self, file_map: dict[str, FileBatchInfo]):
         for video, video_data in file_map.items():
@@ -250,19 +246,24 @@ class Converter:
     def extract_metadata(self, datapoint: str, file_object: Path) -> int:
         command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
-        try:
-            raw_metadata = subprocess.run(command, check=True, capture_output=True, text=True)
-            metadata = raw_metadata.stdout.strip()
-            __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
-        except subprocess.CalledProcessError as exc:
-            __logger__.error("Error extracting %s from %s: %s", datapoint, file_object, exc.stderr)
-            raise
-        return float(metadata)
+        metadata = self._run_command(command=command)
+        __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
+        return float(metadata.stdout.strip())
 
     @staticmethod
     def _get_extract_command(datapoint: str) -> list:
         command = DURATION_OPTS if datapoint == "duration" else AUDIO_BITRATE_OPTS
         return deepcopy(command)
+
+    @staticmethod
+    def _run_command(command):
+        try:
+            raw_data = subprocess.run(command, check=True, capture_output=True, text=True)
+            __logger__.debug("Running command %s", command)
+        except subprocess.CalledProcessError as exc:
+            __logger__.error("Error running: %s: %s", command, exc.stderr)
+            raise
+        return raw_data
 
     def create_cuts(self):
         for media, media_data in self.file_map.items():
@@ -354,9 +355,6 @@ if __name__ == "__main__":
     # TODO: rationalize - loudness check and normalize both acts on file_map (FileBatchInfo)
     if conv.args.check_loudness or conv.args.normalize:
         file_map = conv.create_file_map()
-        # if conv.args.check_loudness:
-            # conv.get_loudnorm_summary(file_map)
-        # if conv.args.normalize:
         conv.audio_processing(file_map)
     # if conv.args.cuts:
         # conv.create_cuts()
