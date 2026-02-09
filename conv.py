@@ -24,6 +24,18 @@ DEFAULT_RE_ENCODE_OPTS = [
     "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
 ]
 
+
+LOUDNESS_ANALYSIS_TEMPLATE = [
+    "ffmpeg",
+    "-i",
+    "{filename}",
+    "-af",
+    "loudnorm=I={lufs}:TP=-1.5:LRA=11:print_format=json",
+    "-f",
+    "null",
+    "-"
+]
+
 DURATION_OPTS = [
     "ffprobe",
     "-v",
@@ -193,22 +205,14 @@ class Converter:
 
     def get_loudnorm_summary(self, media_file):
         __logger__.info("Processing loudness summary for: %s", media_file.as_posix())
-        command = [
-            "ffmpeg",
-            "-i",
-            media_file.as_posix(),
-            "-af",
-            f"loudnorm=I={self.args.lufs}:TP=-1.5:LRA=11:print_format=json",
-            "-f",
-            "null",
-            "-"
-        ]
+        template = deepcopy(LOUDNESS_ANALYSIS_TEMPLATE)
+        command = [c.format(filename=media_file.as_posix(), lufs=self.args.lufs) if "{" in c else c for c in template]
         raw_output = self._run_command(command)
         summary = self.parse_loudnorm_summary(raw_output.stderr)
         diff_from_target = summary["input_i"] - self.args.lufs
         __logger__.info(
-            "current loudness for %s: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
-            media_file.name, summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
+            "current loudness: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
+            summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
         )
 
     def audio_processing(self, file_map: dict[str, FileBatchInfo]):
@@ -235,7 +239,8 @@ class Converter:
                 __logger__.info(command)
                 if not self.dry_run:
                     try:
-                        subprocess.run(command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        subprocess.run(command, text=True, check=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                         __logger__.info("%s -> %s converted", infile, outfile)
                     except subprocess.CalledProcessError as exc:
                         __logger__.error("Error converting %s: %s", infile, exc.stderr)
@@ -246,9 +251,10 @@ class Converter:
     def extract_metadata(self, datapoint: str, file_object: Path) -> int:
         command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
-        metadata = self._run_command(command=command)
+        raw_metadata = self._run_command(command=command)
+        metadata = raw_metadata.stdout.strip()
         __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
-        return float(metadata.stdout.strip())
+        return float(metadata)
 
     @staticmethod
     def _get_extract_command(datapoint: str) -> list:
@@ -321,7 +327,7 @@ def get_args() -> argparse.Namespace:
         description="Batch adjust audio volume, re-encode and cut MP4 files."
     )
     parser.add_argument(
-        "-l", "--lufs", type=float, help="Target integrated loudness in LUFS", default="-16"
+        "-l", "--lufs", type=float, help="Target integrated loudness in LUFS", default=-16
     )
     parser.add_argument(
         "-p", "--pattern", type=str, nargs="?", help="Pattern to match in MP4 filenames.", default=""
@@ -352,7 +358,6 @@ if __name__ == "__main__":
     envs = dotenv_values()
     args = get_args()
     conv = Converter(envs=envs, args=args)
-    # TODO: rationalize - loudness check and normalize both acts on file_map (FileBatchInfo)
     if conv.args.check_loudness or conv.args.normalize:
         file_map = conv.create_file_map()
         conv.audio_processing(file_map)

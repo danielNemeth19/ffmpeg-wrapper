@@ -10,8 +10,9 @@ from conv import __logger__
 
 
 class CompletedProcessStub:
-    def __init__(self, stdout):
+    def __init__(self, stdout=None, stderr=None):
         self.stdout = stdout
+        self.stderr = stderr
 
 
 class TestConvert(unittest.TestCase):
@@ -26,7 +27,7 @@ class TestConvert(unittest.TestCase):
             "TARGET": "/home/user/Videos/done"
         }
         self.default_ns = Namespace(
-            lufs="-16",
+            lufs=-16,
             pattern="test",
             check_loudness=False,
             normalize=False,
@@ -129,18 +130,17 @@ class TestConvert(unittest.TestCase):
 
     def test_get_loudnorm_summary(self):
         fp = Path("/home/user/Videos/my_video.mp4")
-        self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
+        self.subprocess_run_patch.return_value = CompletedProcessStub(stderr=self._get_example_output())
+        self.converter.get_loudnorm_summary(media_file=fp)
         expected_args = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=bit_rate",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            fp.as_posix()
+            "ffmpeg",
+            "-i",
+            fp.as_posix(),
+            "-af",
+            f"loudnorm=I={self.converter.args.lufs}:TP=-1.5:LRA=11:print_format=json",
+            "-f",
+            "null",
+            "-"
         ]
         self.subprocess_run_patch.assert_called_once_with(
             expected_args,
@@ -171,16 +171,6 @@ class TestConvert(unittest.TestCase):
             text=True
         )
 
-    def test_extract_audio_bitrate_error(self):
-        fp = Path("/home/user/Videos/my_video.mp4")
-        with self.assertRaises(subprocess.CalledProcessError):
-            with self.assertLogs(__logger__.name, level=logging.ERROR) as cm:
-                self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(
-                    returncode=1, cmd=["test"], stderr="error raised"
-                )
-                self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
-        self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting audio_bitrate from {
-                         fp.as_posix()}: error raised")
 
     def test_extract_duration(self):
         fp = Path("/home/user/Videos/my_video.mp4")
@@ -202,16 +192,6 @@ class TestConvert(unittest.TestCase):
             text=True
         )
 
-    def test_extract_duration_error(self):
-        fp = Path("/home/user/Videos/my_video.mp4")
-        with self.assertRaises(subprocess.CalledProcessError):
-            with self.assertLogs(__logger__.name, level=logging.ERROR) as cm:
-                self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(
-                    returncode=1, cmd=["test"], stderr="error raised"
-                )
-                self.converter.extract_metadata(datapoint="duration", file_object=fp)
-        self.assertEqual(cm.output[0], f"ERROR:converter:Error extracting duration from {fp.as_posix()}: error raised")
-
     def test_get_new_file_name(self):
         fn_base = "my_track"
         lufs_target = -23.0
@@ -229,7 +209,7 @@ class TestConvert(unittest.TestCase):
         media_data = file_map["my_vid"]
         self.assertEqual(media_data["count"], 2)
         self.assertEqual(media_data["audio_bitrate"], 192000)
-        self.assertEqual(media_data["target_lufs"], "-16")
+        self.assertEqual(media_data["target_lufs"], -16)
 
     def test_creating_file_cut_map(self):
         vid_1_duration = CompletedProcessStub(stdout="60.5")
