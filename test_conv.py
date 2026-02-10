@@ -1,9 +1,7 @@
 from argparse import Namespace
-import logging
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-import subprocess
 
 from conv import Converter
 from conv import __logger__
@@ -128,6 +126,28 @@ class TestConvert(unittest.TestCase):
                 got = cov.sanitize_file_name(original)
                 self.assertEqual(got, expected)
 
+    def test_construct_command_from_template(self):
+        template = ["ffmpeg", "-i", "{filename}", "{param_1}",  "{param_2}"]
+        command_kwargs = {
+            "filename": "/test/media/file.mp3",
+            "param_1": "-my-opt-1",
+            "param_2": "-my-opt-2",
+        }
+        command = self.converter.construct_command(template, **command_kwargs)
+        expected_command = ["ffmpeg", "-i", "/test/media/file.mp3", "-my-opt-1",  "-my-opt-2"]
+        self.assertEqual(command, expected_command)
+
+    def test_construct_command_from_template_raises_error_if_any_key_missing(self):
+        template = ["ffmpeg", "-i", "{filename}", "{param_1}",  "{param_2}"]
+        command_kwargs = {
+            "filename": "/test/media/file.mp3",
+            "param_2": "-my-opt-2"
+        }
+        with self.assertLogs(level="ERROR") as cm:
+            with self.assertRaises(KeyError):
+                self.converter.construct_command(template, **command_kwargs)
+        self.assertEqual(cm.records[0].message, f"Key(s) ('param_1',) missing from {template}")
+
     def test_get_loudnorm_summary(self):
         fp = Path("/home/user/Videos/my_video.mp4")
         self.subprocess_run_patch.return_value = CompletedProcessStub(stderr=self._get_example_output())
@@ -170,7 +190,6 @@ class TestConvert(unittest.TestCase):
             capture_output=True,
             text=True
         )
-
 
     def test_extract_duration(self):
         fp = Path("/home/user/Videos/my_video.mp4")

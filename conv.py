@@ -36,6 +36,22 @@ LOUDNESS_ANALYSIS_TEMPLATE = [
     "-"
 ]
 
+LOUDNESS_NORMALIZATION_TEMPLATE = [
+    "ffmpeg",
+    "-y",
+    "-i",
+    "{filename}",
+    "-c:v",
+    "copy",
+    "-af",
+    "loudnorm=I={lufs}:TP=-1.5:LRA=5:linear=true",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "{audio_bitrate}",
+    "{outfile}",
+]
+
 DURATION_OPTS = [
     "ffprobe",
     "-v",
@@ -203,11 +219,26 @@ class Converter:
                 summary[key] = float(value)
         return summary
 
+    @staticmethod
+    def construct_command(template: list, **kwargs):
+        temp_command = " ".join(deepcopy(template))
+        try:
+            command = temp_command.format(**kwargs)
+        except KeyError as exc:
+            __logger__.error("Key(s) %s missing from %s", exc.args, template)
+            raise
+        return command.split()
+
     def get_loudnorm_summary(self, media_file):
         __logger__.info("Processing loudness summary for: %s", media_file.as_posix())
-        template = deepcopy(LOUDNESS_ANALYSIS_TEMPLATE)
-        command = [c.format(filename=media_file.as_posix(), lufs=self.args.lufs) if "{" in c else c for c in template]
+        params = {
+            "filename": media_file.as_posix(),
+            "lufs": self.args.lufs
+        }
+        command = self.construct_command(LOUDNESS_ANALYSIS_TEMPLATE, **params)
         raw_output = self._run_command(command)
+        if not raw_output:
+            return
         summary = self.parse_loudnorm_summary(raw_output.stderr)
         diff_from_target = summary["input_i"] - self.args.lufs
         __logger__.info(
@@ -215,36 +246,21 @@ class Converter:
             summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
         )
 
-    def audio_processing(self, file_map: dict[str, FileBatchInfo]):
+    def processing_audio(self, file_map: dict[str, FileBatchInfo]):
         for video, video_data in file_map.items():
             __logger__.info("Processing: %s", video)
             for infile, outfile in zip(video_data["original_files"], video_data["new_files"]):
                 if self.args.check_loudness:
                     self.get_loudnorm_summary(infile)
-                command = [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    infile.as_posix(),
-                    "-c:v",
-                    "copy",
-                    "-af",
-                    f"loudnorm=I={self.args.lufs}:TP=-1.5:LRA=5:linear=true",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    str(video_data["audio_bitrate"]),
-                    outfile
-                ]
-                __logger__.info(command)
-                if not self.dry_run:
-                    try:
-                        subprocess.run(command, text=True, check=True,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                        __logger__.info("%s -> %s converted", infile, outfile)
-                    except subprocess.CalledProcessError as exc:
-                        __logger__.error("Error converting %s: %s", infile, exc.stderr)
-                        video_data['done'] = False
+                if self.args.normalize:
+                    params = {
+                        "filename": infile.as_posix(),
+                        "lufs": self.args.lufs,
+                        "audio_bitrate": video_data['audio_bitrate'],
+                        "outfile": outfile
+                    }
+                    command = self.construct_command(LOUDNESS_NORMALIZATION_TEMPLATE, **params)
+                    self._run_command(command)
             video_data['done'] = True
             __logger__.info("Setting video data: %s", video_data['done'])
 
@@ -252,6 +268,8 @@ class Converter:
         command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
         raw_metadata = self._run_command(command=command)
+        if not raw_metadata:
+            return
         metadata = raw_metadata.stdout.strip()
         __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
         return float(metadata)
@@ -261,18 +279,19 @@ class Converter:
         command = DURATION_OPTS if datapoint == "duration" else AUDIO_BITRATE_OPTS
         return deepcopy(command)
 
-    @staticmethod
-    def _run_command(command):
+    def _run_command(self, command):
+        if self.dry_run:
+            __logger__.info("Command: %s", command)
+            return False
         try:
             raw_data = subprocess.run(command, check=True, capture_output=True, text=True)
-            __logger__.debug("Running command %s", command)
         except subprocess.CalledProcessError as exc:
             __logger__.error("Error running: %s: %s", command, exc.stderr)
             raise
         return raw_data
 
-    def create_cuts(self):
-        for media, media_data in self.file_map.items():
+    def create_cuts(self, file_map: dict[str, FileCutInfo]):
+        for media, media_data in file_map.items():
             current_ss = 0
             for i in range(media_data['segments']):
                 command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
@@ -360,6 +379,7 @@ if __name__ == "__main__":
     conv = Converter(envs=envs, args=args)
     if conv.args.check_loudness or conv.args.normalize:
         file_map = conv.create_file_map()
-        conv.audio_processing(file_map)
-    # if conv.args.cuts:
-        # conv.create_cuts()
+        conv.processing_audio(file_map)
+    if conv.args.cuts:
+        file_map = conv.create_file_cut_map()
+        conv.create_cuts(file_map)
