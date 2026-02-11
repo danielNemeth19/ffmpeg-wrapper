@@ -100,7 +100,6 @@ class Converter:
         self.target_path = self._set_target_path(envs)
         self.pattern = self._normalize_pattern()
         self.dry_run = args.dry_run
-        self.clear_target_directory()
 
     @staticmethod
     def _set_source_path(envs):
@@ -133,11 +132,10 @@ class Converter:
         if not self.args.clear_first:
             return
         counter = 0
-        for f in Path(self.target_path).iterdir():
-            if f.is_file() or f.is_symlink():
-                counter += 1
-                if not self.dry_run:
-                    f.unlink()
+        for f in Path(self.target_path).glob(self.pattern):
+            counter += 1
+            if not self.dry_run:
+                f.unlink()
         action_log_msg = "Deleted" if not self.dry_run else "Would delete"
         __logger__.info("%s %d# files from target folder with pattern %s", action_log_msg, counter, self.pattern)
 
@@ -230,7 +228,6 @@ class Converter:
         return command.split()
 
     def get_loudnorm_summary(self, media_file):
-        __logger__.info("Processing loudness summary for: %s", media_file.as_posix())
         params = {
             "filename": media_file.as_posix(),
             "lufs": self.args.lufs
@@ -264,6 +261,7 @@ class Converter:
             video_data['done'] = True
             __logger__.info("Setting video data: %s", video_data['done'])
 
+    # TODO: validate datapoint arg
     def extract_metadata(self, datapoint: str, file_object: Path) -> int:
         command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
@@ -377,6 +375,7 @@ if __name__ == "__main__":
     envs = dotenv_values()
     args = get_args()
     conv = Converter(envs=envs, args=args)
+    conv.clear_target_directory()
     if conv.args.check_loudness or conv.args.normalize:
         file_map = conv.create_file_map()
         conv.processing_audio(file_map)

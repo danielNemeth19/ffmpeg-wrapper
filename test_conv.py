@@ -13,6 +13,14 @@ class CompletedProcessStub:
         self.stderr = stderr
 
 
+class FileStub:
+    def __init__(self, name):
+        self.name = name
+
+    def is_file(self):
+        return True
+
+
 class TestConvert(unittest.TestCase):
     def setUp(self):
         self.path_exists_patcher = patch("pathlib.Path.exists")
@@ -54,10 +62,8 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(self.converter.target_path, "/home/user/Videos/done")
 
     def test_pattern_normalized_based_on_pattern(self):
-        converter = Converter(self.default_env, Namespace(
-            pattern="", check_loudness=False, normalize=False,
-            cuts=None, dry_run=False, clear_first=False
-        ))
+        setattr(self.default_ns, "pattern", "")
+        converter = Converter(self.default_env, self.default_ns)
         self.assertEqual(converter.pattern, "*.mp4")
 
         self.assertEqual(self.converter.pattern, "*test*.mp4")
@@ -77,6 +83,27 @@ class TestConvert(unittest.TestCase):
                 setattr(self.default_ns, "pattern", pattern)
                 conv = Converter(self.default_env, self.default_ns)
                 self.assertEqual(conv.pattern, normalized)
+
+    @patch("pathlib.Path.glob")
+    def test_clear_target_directory_logs_would_be_deleted_count_in_dry_run(self, mock_glob):
+        mock_glob.return_value = self._yield_next_path()
+        converter = Converter(self.default_env, Namespace(clear_first=True, dry_run=True, pattern=""))
+        with self.assertLogs(level="INFO") as cm:
+            converter.clear_target_directory()
+        self.assertEqual(cm.records[0].message, "Would delete 2# files from target folder with pattern *.mp4")
+
+    @patch("pathlib.Path.unlink")
+    @patch("pathlib.Path.glob")
+    def test_clear_target_directory(self, mock_glob, mock_unlink):
+        self.assertIsNone(self.converter.clear_target_directory())
+        self.assertEqual(mock_unlink.call_count, 0)
+
+        mock_glob.return_value = self._yield_next_path()
+        converter = Converter(self.default_env, Namespace(clear_first=True, dry_run=False, pattern=""))
+        with self.assertLogs(level="INFO") as cm:
+            converter.clear_target_directory()
+        self.assertEqual(mock_unlink.call_count, 2)
+        self.assertEqual(cm.records[0].message, "Deleted 2# files from target folder with pattern *.mp4")
 
     def test_calculating_segments(self):
         segment_map = [
@@ -169,6 +196,12 @@ class TestConvert(unittest.TestCase):
             text=True
         )
 
+    def test_get_loudnorm_summary_returns_none_in_dry_run_mode(self):
+        fp = Path("/home/user/Videos/my_video.mp4")
+        setattr(self.default_ns, "dry_run", True)
+        converter = Converter(self.default_env, self.default_ns)
+        self.assertIsNone(converter.get_loudnorm_summary(fp))
+
     def test_extracting_audio_bitrate(self):
         fp = Path("/home/user/Videos/my_video.mp4")
         self.converter.extract_metadata(datapoint="audio_bitrate", file_object=fp)
@@ -210,6 +243,12 @@ class TestConvert(unittest.TestCase):
             capture_output=True,
             text=True
         )
+
+    def test_extract_metadata_returns_none_in_dry_run_mode(self):
+        fp = Path("/home/user/Videos/my_video.mp4")
+        setattr(self.default_ns, "dry_run", True)
+        converter = Converter(self.default_env, self.default_ns)
+        self.assertIsNone(converter.extract_metadata(datapoint="audio_bitrate", file_object=fp))
 
     def test_get_new_file_name(self):
         fn_base = "my_track"
