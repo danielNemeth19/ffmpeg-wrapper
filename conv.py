@@ -228,6 +228,7 @@ class Converter:
         return command.split()
 
     def get_loudnorm_summary(self, media_file):
+        print("running")
         params = {
             "filename": media_file.as_posix(),
             "lufs": self.args.lufs

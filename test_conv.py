@@ -1,10 +1,9 @@
 from argparse import Namespace
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, call
 
-from conv import Converter
-from conv import __logger__
+from conv import Converter, __logger__, FileBatchInfo
 
 
 class CompletedProcessStub:
@@ -45,6 +44,71 @@ class TestConvert(unittest.TestCase):
         self.converter = Converter(self.default_env, self.default_ns)
         self.addCleanup(self.path_exists.stop)
         self.addCleanup(self.subprocess_patcher.stop)
+
+    @staticmethod
+    def _get_file_batch_info_stub(stem: str, num: int) -> dict[str, FileBatchInfo]:
+        original_files = [Path(f"/home/Videos/{stem}_{i:03d}.mp4") for i in range(num)]
+        new_files = [Path(f"/home/Videos/{stem}_lufs-16_{i:03d}.mp4") for i in range(num)]
+        return {
+            stem: {
+                "count": 2,
+                "audio_bitrate": 19200,
+                "original_files": original_files,
+                "new_files": new_files,
+                "target_lufs": -16,
+                "done": False
+            }
+        }
+
+    def test_processing_audio_logs_start_and_end_of_processing(self):
+        stem = "my_media"
+        file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
+        with self.assertLogs(level="INFO") as cm:
+            self.converter.processing_audio(file_map=file_map)
+        self.assertTrue(file_map[stem]['done'])
+        self.assertEqual(len(cm.records), 2)
+        self.assertEqual(cm.records[0].message, f"Processing: {stem}")
+        self.assertEqual(cm.records[1].message, "Setting video data: True")
+
+    def test_processing_audio_loudnorm_summary(self):
+        setattr(self.default_ns, "check_loudness", True)
+        converter = Converter(self.default_env, self.default_ns)
+        stem = "my_media"
+        file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
+        self.subprocess_run_patch.return_value = CompletedProcessStub(stderr=self._get_example_output())
+        converter.processing_audio(file_map=file_map)
+        self.assertEqual(self.subprocess_run_patch.call_count, 2)
+        self.assertTrue(file_map['my_media']['done'])
+
+    def test_processing_audio_normalize(self):
+        setattr(self.default_ns, "normalize", True)
+        converter = Converter(self.default_env, self.default_ns)
+        stem = "my_fav"
+        file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
+        converter.processing_audio(file_map=file_map)
+        self.assertEqual(self.subprocess_run_patch.call_count, 2)
+        expected_calls = [
+            call([
+                "ffmpeg", "-y", "-i",
+                f"{file_map[stem]['original_files'][0]}",
+                "-c:v", "copy", "-af",
+                "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                "-c:a", "aac", "-b:a",
+                f"{file_map[stem]['audio_bitrate']}",
+                f"{file_map[stem]['new_files'][0]}",
+            ], check=True, capture_output=True, text=True),
+            call([
+                "ffmpeg", "-y", "-i",
+                f"{file_map[stem]['original_files'][1]}",
+                "-c:v", "copy", "-af",
+                "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                "-c:a", "aac", "-b:a",
+                f"{file_map[stem]['audio_bitrate']}",
+                f"{file_map[stem]['new_files'][1]}",
+            ], check=True, capture_output=True, text=True)
+        ]
+        self.subprocess_run_patch.assert_has_calls(expected_calls)
+        self.assertTrue(file_map[stem]['done'])
 
     def test_set_source_path_raises_error(self):
         with self.assertRaises(SystemExit) as cm:
@@ -263,6 +327,7 @@ class TestConvert(unittest.TestCase):
         with patch("pathlib.Path.glob") as mock_glob:
             mock_glob.return_value = self._yield_next_path()
             file_map = self.converter.create_file_map()
+        print(file_map)
         self.assertIn("my_vid", file_map)
         media_data = file_map["my_vid"]
         self.assertEqual(media_data["count"], 2)
