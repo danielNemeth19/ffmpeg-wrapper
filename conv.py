@@ -89,7 +89,6 @@ class FileCutInfo(TypedDict):
     stem_index: int
     duration: int
     segments: int
-    done: bool
 
 
 class Converter:
@@ -290,6 +289,7 @@ class Converter:
         return raw_data
 
     def create_cuts(self, file_map: dict[str, FileCutInfo]):
+        print(file_map)
         for media, media_data in file_map.items():
             current_ss = 0
             for i in range(media_data['segments']):
@@ -330,13 +330,12 @@ class Converter:
             segments = self.calculate_segments(duration)
             __logger__.info("Will make %d cuts", segments)
 
-            if new_stem_base not in file_map:
-                file_map[item.as_posix()] = {
-                    'stem_index': stem_index,
-                    'fn_base': Path(self.target_path, new_stem_base),
-                    'duration': duration,
-                    'segments': segments
-                }
+            file_map[item.as_posix()] = {
+                'stem_index': stem_index,
+                'fn_base': Path(self.target_path, new_stem_base),
+                'duration': duration,
+                'segments': segments
+            }
         return file_map
 
 

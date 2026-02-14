@@ -60,6 +60,39 @@ class TestConvert(unittest.TestCase):
             }
         }
 
+    @staticmethod
+    def _get_file_cut_info_stub(stem: str, num: int) -> dict[str, FileBatchInfo]:
+        file_map = {}
+        original_files = [Path(f"/home/Videos/{stem}_{i:03d}.mp4") for i in range(num)]
+        for i, file in enumerate(original_files):
+            file_map[file] = {
+                "stem_index": i,
+                "fn_base": f"/home/Videos/{stem}-{i:03d}",
+                "duration": 180,
+                "segments": 2
+            }
+
+        return original_files, file_map
+
+    def test_cut(self):
+        setattr(self.default_ns, "cuts", 90)
+        converter = Converter(self.default_env, self.default_ns)
+        original_files, file_map = self._get_file_cut_info_stub("my_vid", num=1)
+        converter.create_cuts(file_map)
+        expected_calls = [
+            call([
+                "ffmpeg", "-y", "-ss", "0", "-t", "90",
+                "-i", original_files[0],
+                "-c", "copy", f"{file_map[original_files[0]]['fn_base']}-000.mp4",
+            ], text=True, check=True, stdout=-3, stderr=-1),
+            call([
+                "ffmpeg", "-y", "-ss", "90", "-t", "90",
+                "-i", original_files[0],
+                "-c", "copy", f"{file_map[original_files[0]]['fn_base']}-001.mp4",
+            ], text=True, check=True, stdout=-3, stderr=-1),
+        ]
+        self.subprocess_run_patch.assert_has_calls(expected_calls)
+
     def test_processing_audio_logs_start_and_end_of_processing(self):
         stem = "my_media"
         file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
