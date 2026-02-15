@@ -87,8 +87,10 @@ class FileBatchInfo(TypedDict):
 
 class FileCutInfo(TypedDict):
     stem_index: int
+    fn_base: Path
     duration: int
     segments: int
+    done: bool
 
 
 class Converter:
@@ -244,22 +246,22 @@ class Converter:
         )
 
     def processing_audio(self, file_map: dict[str, FileBatchInfo]):
-        for video, video_data in file_map.items():
-            __logger__.info("Processing: %s", video)
-            for infile, outfile in zip(video_data["original_files"], video_data["new_files"]):
+        for media, media_data in file_map.items():
+            __logger__.info("Processing: %s", media)
+            for infile, outfile in zip(media_data["original_files"], media_data["new_files"]):
                 if self.args.check_loudness:
                     self.get_loudnorm_summary(infile)
                 if self.args.normalize:
                     params = {
                         "filename": infile.as_posix(),
                         "lufs": self.args.lufs,
-                        "audio_bitrate": video_data['audio_bitrate'],
+                        "audio_bitrate": media_data['audio_bitrate'],
                         "outfile": outfile
                     }
                     command = self.construct_command(LOUDNESS_NORMALIZATION_TEMPLATE, **params)
                     self._run_command(command)
-            video_data['done'] = True
-            __logger__.info("Setting video data: %s", video_data['done'])
+            media_data['done'] = True
+            __logger__.info("Processing done")
 
     # TODO: validate datapoint arg
     def extract_metadata(self, datapoint: str, file_object: Path) -> int:
@@ -277,20 +279,9 @@ class Converter:
         command = DURATION_OPTS if datapoint == "duration" else AUDIO_BITRATE_OPTS
         return deepcopy(command)
 
-    def _run_command(self, command):
-        if self.dry_run:
-            __logger__.info("Command: %s", command)
-            return False
-        try:
-            raw_data = subprocess.run(command, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as exc:
-            __logger__.error("Error running: %s: %s", command, exc.stderr)
-            raise
-        return raw_data
-
     def create_cuts(self, file_map: dict[str, FileCutInfo]):
-        print(file_map)
         for media, media_data in file_map.items():
+            __logger__.info("Processing: %s", media)
             current_ss = 0
             for i in range(media_data['segments']):
                 command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
@@ -298,16 +289,11 @@ class Converter:
                 opts = DEFAULT_RE_ENCODE_OPTS if self.args.re_encode else ["-c", "copy"]
                 command.extend(opts)
                 command.append(f"{media_data['fn_base']}-{i:03d}.mp4")
-                __logger__.info(command)
-                if not self.dry_run:
-                    try:
-                        subprocess.run(
-                            command, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-                        )
-                        __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
-                    except subprocess.CalledProcessError as exc:
-                        __logger__.error("Error converting %s: %s", media, exc.stderr)
+                __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
+                self._run_command(command)
                 current_ss += self.args.cuts
+            media_data['done'] = True
+            __logger__.info("Processing done")
 
     def calculate_segments(self, duration: int) -> int:
         quotient, remainder = divmod(duration, self.args.cuts)
@@ -334,9 +320,21 @@ class Converter:
                 'stem_index': stem_index,
                 'fn_base': Path(self.target_path, new_stem_base),
                 'duration': duration,
-                'segments': segments
+                'segments': segments,
+                'done': False
             }
         return file_map
+
+    def _run_command(self, command):
+        if self.dry_run:
+            __logger__.info("Command: %s", command)
+            return False
+        try:
+            raw_data = subprocess.run(command, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            __logger__.error("Error running: %s: %s", command, exc.stderr)
+            raise
+        return raw_data
 
 
 def get_args() -> argparse.Namespace:
