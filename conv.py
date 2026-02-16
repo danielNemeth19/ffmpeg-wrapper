@@ -10,70 +10,16 @@ from collections import OrderedDict
 
 from dotenv import dotenv_values
 
+from command_templates import DEFAULT_RE_ENCODE_OPTS, LOUDNESS_ANALYSIS_TEMPLATE, LOUDNESS_NORMALIZATION_TEMPLATE, \
+    DURATION_OPTS, AUDIO_BITRATE_OPTS, CREATE_CUTS_TEMPLATE
+
 
 logging.basicConfig(level=logging.INFO)
 __logger__ = logging.getLogger("converter")
 
 
-DEFAULT_RE_ENCODE_OPTS = [
-    "-vf", "scale=1280:720,fps=30",
-    "-c:a", "aac",
-    "-b:a", "192k",
-    "-ar", "48000",
-    "-ac", "2",
-    "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-]
-
-
-LOUDNESS_ANALYSIS_TEMPLATE = [
-    "ffmpeg",
-    "-i",
-    "{filename}",
-    "-af",
-    "loudnorm=I={lufs}:TP=-1.5:LRA=11:print_format=json",
-    "-f",
-    "null",
-    "-"
-]
-
-LOUDNESS_NORMALIZATION_TEMPLATE = [
-    "ffmpeg",
-    "-y",
-    "-i",
-    "{filename}",
-    "-c:v",
-    "copy",
-    "-af",
-    "loudnorm=I={lufs}:TP=-1.5:LRA=5:linear=true",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "{audio_bitrate}",
-    "{outfile}",
-]
-
-DURATION_OPTS = [
-    "ffprobe",
-    "-v",
-    "error",
-    "-show_entries",
-    "format=duration",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-]
-
-
-AUDIO_BITRATE_OPTS = [
-    "ffprobe",
-    "-v",
-    "error",
-    "-select_streams",
-    "a:0",
-    "-show_entries",
-    "stream=bit_rate",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-]
+class ConverterError(Exception):
+    pass
 
 
 class FileBatchInfo(TypedDict):
@@ -95,7 +41,6 @@ class FileCutInfo(TypedDict):
 
 class Converter:
     def __init__(self, envs: OrderedDict[str, str], args: argparse.Namespace):
-        self._validate_args(args)
         self.args = args
         self.source_path = self._set_source_path(envs)
         self.target_path = self._set_target_path(envs)
@@ -125,9 +70,6 @@ class Converter:
         if not self.args.pattern:
             return "*.mp4"
         return f"*{self.args.pattern}*.mp4"
-
-    def _validate_args(self, args):
-        return
 
     def clear_target_directory(self) -> None:
         if not self.args.clear_first:
@@ -229,7 +171,6 @@ class Converter:
         return command.split()
 
     def get_loudnorm_summary(self, media_file):
-        print("running")
         params = {
             "filename": media_file.as_posix(),
             "lufs": self.args.lufs
@@ -263,13 +204,10 @@ class Converter:
             media_data['done'] = True
             __logger__.info("Processing done")
 
-    # TODO: validate datapoint arg
-    def extract_metadata(self, datapoint: str, file_object: Path) -> int:
+    def extract_metadata(self, datapoint: str, file_object: Path) -> float:
         command = self._get_extract_command(datapoint)
         command.append(file_object.as_posix())
         raw_metadata = self._run_command(command=command)
-        if not raw_metadata:
-            return
         metadata = raw_metadata.stdout.strip()
         __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
         return float(metadata)
@@ -284,11 +222,15 @@ class Converter:
             __logger__.info("Processing: %s", media)
             current_ss = 0
             for i in range(media_data['segments']):
-                command = ["ffmpeg", "-y", "-ss", str(current_ss), "-t", str(self.args.cuts)]
-                command.extend(["-i", media])
                 opts = DEFAULT_RE_ENCODE_OPTS if self.args.re_encode else ["-c", "copy"]
-                command.extend(opts)
-                command.append(f"{media_data['fn_base']}-{i:03d}.mp4")
+                params = {
+                    "current_ss": str(current_ss),
+                    "cuts": str(self.args.cuts),
+                    "filename": media,
+                    "opts": " ".join(opts),
+                    "outfile": f"{media_data['fn_base']}-{i:03d}.mp4"
+                }
+                command = self.construct_command(CREATE_CUTS_TEMPLATE, **params)
                 __logger__.info("Cut #%d - current_ss: %d", i, current_ss)
                 self._run_command(command)
                 current_ss += self.args.cuts
@@ -332,8 +274,7 @@ class Converter:
         try:
             raw_data = subprocess.run(command, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as exc:
-            __logger__.error("Error running: %s: %s", command, exc.stderr)
-            raise
+            raise ConverterError(f"Error running: {command}: {exc.stderr}") from exc
         return raw_data
 
 

@@ -1,0 +1,73 @@
+DEFAULT_RE_ENCODE_OPTS = [
+    "-vf", "scale=1280:720,fps=30",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-ar", "48000",
+    "-ac", "2",
+    "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+]
+
+
+LOUDNESS_ANALYSIS_TEMPLATE = [
+    "ffmpeg",
+    "-i",
+    "{filename}",
+    "-af",
+    "loudnorm=I={lufs}:TP=-1.5:LRA=11:print_format=json",
+    "-f",
+    "null",
+    "-"
+]
+
+LOUDNESS_NORMALIZATION_TEMPLATE = [
+    "ffmpeg",
+    "-y",
+    "-i",
+    "{filename}",
+    "-c:v",
+    "copy",
+    "-af",
+    "loudnorm=I={lufs}:TP=-1.5:LRA=5:linear=true",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "{audio_bitrate}",
+    "{outfile}",
+]
+
+DURATION_OPTS = [
+    "ffprobe",
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+]
+
+
+AUDIO_BITRATE_OPTS = [
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "a:0",
+    "-show_entries",
+    "stream=bit_rate",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+]
+
+
+CREATE_CUTS_TEMPLATE = [
+    "ffmpeg",
+    "-y",
+    "-ss",
+    "{current_ss}",
+    "-t",
+    "{cuts}",
+    "-i",
+    "{filename}",
+    "{opts}",
+    "{outfile}"
+]

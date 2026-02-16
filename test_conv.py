@@ -4,7 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import patch, call
 
-from conv import Converter, __logger__, FileBatchInfo
+from conv import Converter, ConverterError, FileBatchInfo
 
 
 class CompletedProcessStub:
@@ -454,10 +454,9 @@ class TestConvert(unittest.TestCase):
     def test_run_command_raises_when_command_results_in_called_process_error(self):
         command = ["testing", "error", "handling"]
         self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(1, cmd=command, stderr="simulated error")
-        with self.assertLogs(level="ERROR") as cm:
-            with self.assertRaises(subprocess.CalledProcessError):
-                self.converter._run_command(command)
-        self.assertEqual(cm.output[0], f"ERROR:converter:Error running: {command}: simulated error")
+        with self.assertRaises(ConverterError) as cm:
+            self.converter._run_command(command)
+        self.assertEqual(str(cm.exception), f"Error running: {command}: simulated error")
 
     @staticmethod
     def _get_file_batch_info_stub(stem: str, num: int) -> dict[str, FileBatchInfo]:
@@ -477,7 +476,7 @@ class TestConvert(unittest.TestCase):
     @staticmethod
     def _get_file_cut_info_stub(stem: str, num: int) -> dict[str, FileBatchInfo]:
         file_map = {}
-        original_files = [Path(f"/home/Videos/{stem}_{i:03d}.mp4") for i in range(num)]
+        original_files = [f"/home/Videos/{stem}_{i:03d}.mp4" for i in range(num)]
         for i, file in enumerate(original_files):
             file_map[file] = {
                 "stem_index": i,
