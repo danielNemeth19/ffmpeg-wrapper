@@ -10,7 +10,7 @@ from collections import OrderedDict
 
 from dotenv import dotenv_values
 
-from command_templates import DEFAULT_RE_ENCODE_OPTS, LOUDNESS_ANALYSIS_TEMPLATE, LOUDNESS_NORMALIZATION_TEMPLATE, \
+from command_templates import DEFAULT_OVERLAY_TEMPLATE, DEFAULT_RE_ENCODE_OPTS, LOUDNESS_ANALYSIS_TEMPLATE, LOUDNESS_NORMALIZATION_TEMPLATE, \
     DURATION_OPTS, AUDIO_BITRATE_OPTS, CREATE_CUTS_TEMPLATE
 
 
@@ -201,6 +201,15 @@ class Converter:
                     }
                     command = self.construct_command(LOUDNESS_NORMALIZATION_TEMPLATE, **params)
                     self._run_command(command)
+                if self.args.text:
+                    params = {
+                        "filename": infile.as_posix(),
+                        "text": self.args.text,
+                        "outfile": outfile
+                    }
+                    # TODO: this cannot handle spaces
+                    command = self.construct_command(DEFAULT_OVERLAY_TEMPLATE, **params)
+                    self._run_command(command)
             media_data['done'] = True
             __logger__.info("Processing done")
 
@@ -301,6 +310,9 @@ def get_args() -> argparse.Namespace:
         "-re", "--re-encode", action="store_true", help="Re-encode both video and audio stream to sensible defaults"
     )
     parser.add_argument(
+        "-t", "--text", type=str, nargs="?", help="Draws text on media"
+    )
+    parser.add_argument(
         "-cf", "--clear-first", action="store_true", help="Clear target folder first"
     )
     parser.add_argument(
@@ -315,7 +327,7 @@ if __name__ == "__main__":
     args = get_args()
     conv = Converter(envs=envs, args=args)
     conv.clear_target_directory()
-    if conv.args.check_loudness or conv.args.normalize:
+    if conv.args.check_loudness or conv.args.normalize or conv.args.text:
         file_map = conv.create_file_map()
         conv.processing_audio(file_map)
     if conv.args.cuts:

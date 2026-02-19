@@ -1,3 +1,14 @@
+DEFAULT_OVERLAY_TEMPLATE = [
+    "ffmpeg",
+    "-i",
+    "{filename}",
+    "-vf",
+    "drawtext=text='{text}':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
+    "-c:a",
+    "copy",
+    "{outfile}"
+]
+
 DEFAULT_RE_ENCODE_OPTS = [
     "-vf", "scale=1280:720,fps=30",
     "-c:a", "aac",
