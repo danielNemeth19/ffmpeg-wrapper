@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch, call
 
 from conv import Converter, ConverterError, FileBatchInfo
+from command_templates import DEFAULT_COPY_OPTS
 
 
 class CompletedProcessStub:
@@ -39,6 +40,7 @@ class TestConvert(unittest.TestCase):
             normalize=False,
             cuts=10,
             re_encode=False,
+            text="",
             clear_first=False,
             dry_run=False
         )
@@ -162,6 +164,27 @@ class TestConvert(unittest.TestCase):
         }
         command = self.converter.construct_command(template, **command_kwargs)
         expected_command = ["ffmpeg", "-i", "/test/media/file.mp3", "-my-opt-1",  "-my-opt-2"]
+        self.assertEqual(command, expected_command)
+
+    def test_construct_command_from_template_can_handle_spaces(self):
+        template = ["ffmpeg", "-i", "{filename}", "{param_1}",  "{param_2}"]
+        command_kwargs = {
+            "filename": "/test/media/my file.mp3",
+            "param_1": "-my-opt-1",
+            "param_2": "-my-opt-2",
+        }
+        command = self.converter.construct_command(template, **command_kwargs)
+        expected_command = ["ffmpeg", "-i", "/test/media/my file.mp3", "-my-opt-1",  "-my-opt-2"]
+        self.assertEqual(command, expected_command)
+
+    def test_construct_command_from_template_can_handle_options_param(self):
+        template = ["ffmpeg", "-i", "{filename}", "{opts}"]
+        command_kwargs = {
+            "filename": "/test/media/my_file.mp3",
+            "opts": DEFAULT_COPY_OPTS
+        }
+        command = self.converter.construct_command(template, **command_kwargs)
+        expected_command = ["ffmpeg", "-i", "/test/media/my_file.mp3", "-c",  "copy"]
         self.assertEqual(command, expected_command)
 
     def test_construct_command_from_template_raises_error_if_any_key_missing(self):
@@ -294,7 +317,7 @@ class TestConvert(unittest.TestCase):
             self.converter.processing_audio(file_map=file_map)
         self.assertTrue(file_map[stem]['done'])
         self.assertEqual(len(cm.records), 2)
-        self.assertEqual(cm.records[0].message, f"Processing: {stem}")
+        self.assertEqual(cm.records[0].message, f"Processing audio: {stem}")
         self.assertEqual(cm.records[1].message, "Processing done")
 
     def test_processing_audio_loudnorm_summary(self):

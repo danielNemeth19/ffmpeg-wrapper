@@ -1,4 +1,30 @@
-DEFAULT_OVERLAY_TEMPLATE = [
+DURATION_TEMPLATE = (
+    "ffprobe",
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    "{infile}",
+)
+
+
+AUDIO_BITRATE_TEMPLATE = (
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "a:0",
+    "-show_entries",
+    "stream=bit_rate",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    "{infile}",
+)
+
+
+DEFAULT_OVERLAY_TEMPLATE = (
     "ffmpeg",
     "-i",
     "{filename}",
@@ -7,19 +33,10 @@ DEFAULT_OVERLAY_TEMPLATE = [
     "-c:a",
     "copy",
     "{outfile}"
-]
-
-DEFAULT_RE_ENCODE_OPTS = [
-    "-vf", "scale=1280:720,fps=30",
-    "-c:a", "aac",
-    "-b:a", "192k",
-    "-ar", "48000",
-    "-ac", "2",
-    "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-]
+)
 
 
-LOUDNESS_ANALYSIS_TEMPLATE = [
+LOUDNESS_ANALYSIS_TEMPLATE = (
     "ffmpeg",
     "-i",
     "{filename}",
@@ -28,9 +45,10 @@ LOUDNESS_ANALYSIS_TEMPLATE = [
     "-f",
     "null",
     "-"
-]
+)
 
-LOUDNESS_NORMALIZATION_TEMPLATE = [
+
+LOUDNESS_NORMALIZATION_TEMPLATE = (
     "ffmpeg",
     "-y",
     "-i",
@@ -44,33 +62,10 @@ LOUDNESS_NORMALIZATION_TEMPLATE = [
     "-b:a",
     "{audio_bitrate}",
     "{outfile}",
-]
-
-DURATION_OPTS = [
-    "ffprobe",
-    "-v",
-    "error",
-    "-show_entries",
-    "format=duration",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-]
+)
 
 
-AUDIO_BITRATE_OPTS = [
-    "ffprobe",
-    "-v",
-    "error",
-    "-select_streams",
-    "a:0",
-    "-show_entries",
-    "stream=bit_rate",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-]
-
-
-CREATE_CUTS_TEMPLATE = [
+CREATE_CUTS_TEMPLATE = (
     "ffmpeg",
     "-y",
     "-ss",
@@ -81,4 +76,19 @@ CREATE_CUTS_TEMPLATE = [
     "{filename}",
     "{opts}",
     "{outfile}"
-]
+)
+
+
+DEFAULT_RE_ENCODE_OPTS = (
+    "-vf", "scale=1280:720,fps=30",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-ar", "48000",
+    "-ac", "2",
+    "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+)
+
+
+DEFAULT_COPY_OPTS = (
+    "-c", "copy",
+)

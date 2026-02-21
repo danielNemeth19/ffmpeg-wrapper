@@ -1,4 +1,3 @@
-from copy import deepcopy
 import sys
 import argparse
 import json
@@ -10,8 +9,8 @@ from collections import OrderedDict
 
 from dotenv import dotenv_values
 
-from command_templates import DEFAULT_OVERLAY_TEMPLATE, DEFAULT_RE_ENCODE_OPTS, LOUDNESS_ANALYSIS_TEMPLATE, LOUDNESS_NORMALIZATION_TEMPLATE, \
-    DURATION_OPTS, AUDIO_BITRATE_OPTS, CREATE_CUTS_TEMPLATE
+from command_templates import DURATION_TEMPLATE, AUDIO_BITRATE_TEMPLATE, DEFAULT_RE_ENCODE_OPTS, \
+    LOUDNESS_ANALYSIS_TEMPLATE, LOUDNESS_NORMALIZATION_TEMPLATE, CREATE_CUTS_TEMPLATE, DEFAULT_OVERLAY_TEMPLATE
 
 
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +39,8 @@ class FileCutInfo(TypedDict):
 
 
 class Converter:
+    COMMAND_SEPARATOR = "|"
+
     def __init__(self, envs: OrderedDict[str, str], args: argparse.Namespace):
         self.args = args
         self.source_path = self._set_source_path(envs)
@@ -160,15 +161,17 @@ class Converter:
                 summary[key] = float(value)
         return summary
 
-    @staticmethod
-    def construct_command(template: list, **kwargs):
-        temp_command = " ".join(deepcopy(template))
+    def construct_command(self, template: list, **kwargs):
+        opts = kwargs.pop("opts", None)
+        if opts:
+            kwargs["opts"] = self.COMMAND_SEPARATOR.join(opts)
+        temp_command = self.COMMAND_SEPARATOR.join(template)
         try:
             command = temp_command.format(**kwargs)
         except KeyError as exc:
             __logger__.error("Key(s) %s missing from %s", exc.args, template)
             raise
-        return command.split()
+        return command.split(self.COMMAND_SEPARATOR)
 
     def get_loudnorm_summary(self, media_file):
         params = {
@@ -188,7 +191,7 @@ class Converter:
 
     def processing_audio(self, file_map: dict[str, FileBatchInfo]):
         for media, media_data in file_map.items():
-            __logger__.info("Processing: %s", media)
+            __logger__.info("Processing audio: %s", media)
             for infile, outfile in zip(media_data["original_files"], media_data["new_files"]):
                 if self.args.check_loudness:
                     self.get_loudnorm_summary(infile)
@@ -201,30 +204,40 @@ class Converter:
                     }
                     command = self.construct_command(LOUDNESS_NORMALIZATION_TEMPLATE, **params)
                     self._run_command(command)
-                if self.args.text:
-                    params = {
-                        "filename": infile.as_posix(),
-                        "text": self.args.text,
-                        "outfile": outfile
-                    }
-                    # TODO: this cannot handle spaces
-                    command = self.construct_command(DEFAULT_OVERLAY_TEMPLATE, **params)
-                    self._run_command(command)
             media_data['done'] = True
             __logger__.info("Processing done")
 
-    def extract_metadata(self, datapoint: str, file_object: Path) -> float:
-        command = self._get_extract_command(datapoint)
-        command.append(file_object.as_posix())
+    def processing_overlay(self, file_map: dict[str, FileBatchInfo]):
+        for media, media_data in file_map.items():
+            __logger__.info("Processing overlay: %s", media)
+            for infile, outfile in zip(media_data["original_files"], media_data["new_files"]):
+                params = {
+                    "filename": infile.as_posix(),
+                    "text": self.args.text,
+                    "outfile": outfile
+                }
+                command = self.construct_command(DEFAULT_OVERLAY_TEMPLATE, **params)
+                self._run_command(command)
+            media_data['done'] = True
+            __logger__.info("Processing done")
+
+    def extract_metadata(self, datapoint: str, file_object: Path) -> float | None:
+        template = self._get_extract_template(datapoint)
+        params = {
+            "infile": file_object.as_posix(),
+        }
+        command = self.construct_command(template, **params)
         raw_metadata = self._run_command(command=command)
+        if not raw_metadata:
+            return None
         metadata = raw_metadata.stdout.strip()
         __logger__.info("Extracted metadata %s from %s -- %s", datapoint, file_object.as_posix(), metadata)
         return float(metadata)
 
     @staticmethod
-    def _get_extract_command(datapoint: str) -> list:
-        command = DURATION_OPTS if datapoint == "duration" else AUDIO_BITRATE_OPTS
-        return deepcopy(command)
+    def _get_extract_template(datapoint: str) -> list:
+        command = DURATION_TEMPLATE if datapoint == "duration" else AUDIO_BITRATE_TEMPLATE
+        return command
 
     def create_cuts(self, file_map: dict[str, FileCutInfo]):
         for media, media_data in file_map.items():
@@ -236,7 +249,7 @@ class Converter:
                     "current_ss": str(current_ss),
                     "cuts": str(self.args.cuts),
                     "filename": media,
-                    "opts": " ".join(opts),
+                    "opts": opts,
                     "outfile": f"{media_data['fn_base']}-{i:03d}.mp4"
                 }
                 command = self.construct_command(CREATE_CUTS_TEMPLATE, **params)
@@ -327,9 +340,12 @@ if __name__ == "__main__":
     args = get_args()
     conv = Converter(envs=envs, args=args)
     conv.clear_target_directory()
-    if conv.args.check_loudness or conv.args.normalize or conv.args.text:
+    if conv.args.check_loudness or conv.args.normalize:
         file_map = conv.create_file_map()
         conv.processing_audio(file_map)
+    if conv.args.text:
+        file_map = conv.create_file_map()
+        conv.processing_overlay(file_map)
     if conv.args.cuts:
         file_map = conv.create_file_cut_map()
         conv.create_cuts(file_map)
