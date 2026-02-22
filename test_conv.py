@@ -303,7 +303,6 @@ class TestConvert(unittest.TestCase):
         with patch("pathlib.Path.glob") as mock_glob:
             mock_glob.return_value = self._yield_next_path()
             file_map = self.converter.create_file_map()
-        print(file_map)
         self.assertIn("my_vid", file_map)
         media_data = file_map["my_vid"]
         self.assertEqual(media_data["count"], 2)
@@ -316,9 +315,11 @@ class TestConvert(unittest.TestCase):
         with self.assertLogs(level="INFO") as cm:
             self.converter.processing_audio(file_map=file_map)
         self.assertTrue(file_map[stem]['done'])
-        self.assertEqual(len(cm.records), 2)
+        self.assertEqual(len(cm.records), 4)
         self.assertEqual(cm.records[0].message, f"Processing audio: {stem}")
-        self.assertEqual(cm.records[1].message, "Processing done")
+        self.assertEqual(cm.records[1].message, f"Processing media: {stem}_000.mp4")
+        self.assertEqual(cm.records[2].message, f"Processing media: {stem}_001.mp4")
+        self.assertEqual(cm.records[3].message, "Processing done")
 
     def test_processing_audio_loudnorm_summary(self):
         setattr(self.default_ns, "check_loudness", True)
@@ -354,6 +355,47 @@ class TestConvert(unittest.TestCase):
                 "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
                 "-c:a", "aac", "-b:a",
                 f"{file_map[stem]['audio_bitrate']}",
+                f"{file_map[stem]['new_files'][1]}",
+            ], check=True, capture_output=True, text=True)
+        ]
+        self.subprocess_run_patch.assert_has_calls(expected_calls)
+        self.assertTrue(file_map[stem]['done'])
+
+    def test_processing_overlay_logs_start_and_end_of_processing(self):
+        stem = "my_media"
+        file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
+        with self.assertLogs(level="INFO") as cm:
+            self.converter.processing_overlay(file_map=file_map)
+        self.assertTrue(file_map[stem]['done'])
+        self.assertEqual(len(cm.records), 4)
+        self.assertEqual(cm.records[0].message, f"Processing overlay: {stem}")
+        self.assertEqual(cm.records[1].message, f"Processing media: {stem}_000.mp4")
+        self.assertEqual(cm.records[2].message, f"Processing media: {stem}_001.mp4")
+        self.assertEqual(cm.records[3].message, "Processing done")
+
+    def test_processing_overlay(self):
+        test_text = "let's overlay this"
+        setattr(self.default_ns, "text", test_text)
+        converter = Converter(self.default_env, self.default_ns)
+        stem = "my_fav"
+        file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
+        converter.processing_overlay(file_map=file_map)
+        self.assertEqual(self.subprocess_run_patch.call_count, 2)
+        expected_calls = [
+            call([
+                "ffmpeg", "-i",
+                f"{file_map[stem]['original_files'][0]}",
+                "-vf",
+                f"drawtext=text='{test_text}':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
+                "-c:a", "copy",
+                f"{file_map[stem]['new_files'][0]}",
+            ], check=True, capture_output=True, text=True),
+            call([
+                "ffmpeg", "-i",
+                f"{file_map[stem]['original_files'][1]}",
+                "-vf",
+                f"drawtext=text='{test_text}':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
+                "-c:a", "copy",
                 f"{file_map[stem]['new_files'][1]}",
             ], check=True, capture_output=True, text=True)
         ]

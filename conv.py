@@ -17,6 +17,11 @@ logging.basicConfig(level=logging.INFO)
 __logger__ = logging.getLogger("converter")
 
 
+RED = "\033[31m"
+GREEN = "\033[32m"
+RESET = "\033[0m"
+
+
 class ConverterError(Exception):
     pass
 
@@ -184,15 +189,17 @@ class Converter:
             return
         summary = self.parse_loudnorm_summary(raw_output.stderr)
         diff_from_target = summary["input_i"] - self.args.lufs
+        hl = GREEN if diff_from_target > 0 else RED
         __logger__.info(
-            "current loudness: %.2f - diff from target (%s): %.2f - projected offset from target: %.2f",
-            summary['input_i'], self.args.lufs, diff_from_target, summary["target_offset"]
+            "current loudness: %.2f - diff from target (%s): %s%.2f%s",
+            summary['input_i'], self.args.lufs, hl, diff_from_target, RESET
         )
 
     def processing_audio(self, file_map: dict[str, FileBatchInfo]):
         for media, media_data in file_map.items():
             __logger__.info("Processing audio: %s", media)
             for infile, outfile in zip(media_data["original_files"], media_data["new_files"]):
+                __logger__.info("Processing media: %s", infile.name)
                 if self.args.check_loudness:
                     self.get_loudnorm_summary(infile)
                 if self.args.normalize:
@@ -211,6 +218,7 @@ class Converter:
         for media, media_data in file_map.items():
             __logger__.info("Processing overlay: %s", media)
             for infile, outfile in zip(media_data["original_files"], media_data["new_files"]):
+                __logger__.info("Processing media: %s", infile.name)
                 params = {
                     "filename": infile.as_posix(),
                     "text": self.args.text,
