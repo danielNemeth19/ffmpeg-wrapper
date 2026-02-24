@@ -343,7 +343,7 @@ def get_args() -> argparse.Namespace:
     return args
 
 
-if __name__ == "__main__":
+def main():
     envs = dotenv_values()
     args = get_args()
     conv = Converter(envs=envs, args=args)
@@ -357,3 +357,7 @@ if __name__ == "__main__":
     if conv.args.cuts:
         file_map = conv.create_file_cut_map()
         conv.create_cuts(file_map)
+
+
+if __name__ == "__main__":
+    main()
