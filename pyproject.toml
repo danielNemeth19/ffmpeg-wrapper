@@ -15,3 +15,10 @@ dev = [
     "mypy>=1.19.1",
     "pylint>=4.0.5",
 ]
+
+[project.scripts]
+ffmpeg_wrapper = "ffmpeg_wrapper.conv:main"
+
+[build-system]
+requires = ["uv_build>=0.10.5,<0.11.0"]
+build-backend = "uv_build"
