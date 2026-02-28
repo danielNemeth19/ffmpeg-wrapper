@@ -4,8 +4,8 @@ import subprocess
 import unittest
 from unittest.mock import patch, call
 
-from conv import Converter, ConverterError, FileBatchInfo
-from command_templates import DEFAULT_COPY_OPTS
+from ffmpeg_wrapper import Converter, ConverterError, FileBatchInfo
+from ffmpeg_wrapper.command_templates import DEFAULT_COPY_OPTS
 
 
 class CompletedProcessStub:
