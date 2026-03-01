@@ -14,6 +14,7 @@ dev = [
     "coverage>=7.13.4",
     "mypy>=1.19.1",
     "pylint>=4.0.5",
+    "ruff>=0.15.4",
 ]
 
 [project.scripts]
@@ -28,3 +29,25 @@ src-layout = true
 
 [tool.uv]
 package = true
+
+[tool.coverage.run]
+source = ["ffmpeg_wrapper"]
+branch = true
+omit = [
+    "tests/*",
+    "*/__init__.py",
+]
+
+[tool.mypy]
+python_version = "3.14"
+mypy_path = "src"
+check_untyped_defs = true
+warn_return_any = true
+
+[tool.ruff]
+src = ["src"]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "PL"]

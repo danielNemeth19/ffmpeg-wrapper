@@ -1,8 +1,8 @@
-from argparse import Namespace
-from pathlib import Path
 import subprocess
 import unittest
-from unittest.mock import patch, call
+from argparse import Namespace
+from pathlib import Path
+from unittest.mock import call, patch
 
 from ffmpeg_wrapper import Converter, ConverterError, FileBatchInfo
 from ffmpeg_wrapper.command_templates import DEFAULT_COPY_OPTS
@@ -29,24 +29,27 @@ class TestConvert(unittest.TestCase):
         self.path_exists.return_value = True
         self.subprocess_patcher = patch("subprocess.run")
         self.subprocess_run_patch = self.subprocess_patcher.start()
-        self.default_env = {
-            "SOURCE": "/home/user/Videos",
-            "TARGET": "/home/user/Videos/done"
-        }
-        self.default_ns = Namespace(
-            lufs=-16,
-            pattern="test",
-            check_loudness=False,
-            normalize=False,
-            cuts=10,
-            re_encode=False,
-            text="",
-            clear_first=False,
-            dry_run=False
-        )
-        self.converter = Converter(self.default_env, self.default_ns)
+        self.default_env = {"SOURCE": "/home/user/Videos", "TARGET": "/home/user/Videos/done"}
+        self.converter = Converter(self.default_env, **self._get_kwargs())
         self.addCleanup(self.path_exists.stop)
         self.addCleanup(self.subprocess_patcher.stop)
+
+    @staticmethod
+    def _get_kwargs(**kwargs):
+        default_kwargs = {
+            "lufs": -16,
+            "pattern": "test",
+            "check_loudness": False,
+            "normalize": False,
+            "segment_length": 10,
+            "re_encode": False,
+            "text": "",
+            "clear_first": False,
+            "dry_run": False,
+        }
+
+        default_kwargs.update(kwargs)
+        return default_kwargs
 
     def test_set_source_path_raises_error(self):
         with self.assertRaises(SystemExit) as cm:
@@ -56,40 +59,33 @@ class TestConvert(unittest.TestCase):
         self.path_exists.return_value = False
         envs = {"SOURCE": "/no/folder/like/this"}
         with self.assertRaises(SystemExit) as cm:
-            Converter(envs, self.default_ns)
+            Converter(envs, **self._get_kwargs())
         self.assertEqual(cm.exception.code, 1)
 
     def test_paths_are_set_correctly(self):
         self.assertEqual(self.converter.source_path, "/home/user/Videos")
         self.assertEqual(self.converter.target_path, "/home/user/Videos/done")
 
-    def test_pattern_normalized_based_on_pattern(self):
-        setattr(self.default_ns, "pattern", "")
-        converter = Converter(self.default_env, self.default_ns)
-        self.assertEqual(converter.pattern, "*.mp4")
-
-        self.assertEqual(self.converter.pattern, "*test*.mp4")
-
-    @patch("pathlib.Path.mkdir")
-    def test_paths_are_set_correctly_with_creating_target_folder_if_needed(self, mock_make):
-        self.path_exists.side_effect = [True, False]
-        mock_make.return_value = True
-        conv = Converter(self.default_env, self.default_ns)
-        self.assertEqual(conv.source_path, "/home/user/Videos")
-        self.assertEqual(conv.target_path, "/home/user/Videos/done")
-        mock_make.assert_called_once_with()
-
     def test_normalizing_pattern(self):
         for pattern, normalized in zip(("", "artist_name"), ("*.mp4", "*artist_name*.mp4")):
             with self.subTest(pattern=pattern, normalized=normalized):
-                setattr(self.default_ns, "pattern", pattern)
-                conv = Converter(self.default_env, self.default_ns)
+                k = self._get_kwargs(pattern=pattern)
+                conv = Converter(self.default_env, **k)
                 self.assertEqual(conv.pattern, normalized)
+
+    @patch("pathlib.Path.mkdir")
+    def test_paths_are_set_correctly_with_creating_target_folder_if_needed(self, mock_mkdir):
+        self.path_exists.side_effect = [True, False]
+        conv = Converter(self.default_env, **self._get_kwargs())
+        self.assertEqual(conv.source_path, "/home/user/Videos")
+        self.assertEqual(conv.target_path, "/home/user/Videos/done")
+        mock_mkdir.assert_called_once_with()
 
     @patch("pathlib.Path.glob")
     def test_clear_target_directory_logs_would_be_deleted_count_in_dry_run(self, mock_glob):
         mock_glob.return_value = self._yield_next_path()
-        converter = Converter(self.default_env, Namespace(clear_first=True, dry_run=True, pattern=""))
+        kwargs = self._get_kwargs(clear_first=True, dry_run=True, pattern="")
+        converter = Converter(self.default_env, **kwargs)
         with self.assertLogs(level="INFO") as cm:
             converter.clear_target_directory()
         self.assertEqual(cm.records[0].message, "Would delete 2# files from target folder with pattern *.mp4")
@@ -101,7 +97,8 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(mock_unlink.call_count, 0)
 
         mock_glob.return_value = self._yield_next_path()
-        converter = Converter(self.default_env, Namespace(clear_first=True, dry_run=False, pattern=""))
+        kwargs = self._get_kwargs(clear_first=True, dry_run=False, pattern="")
+        converter = Converter(self.default_env, **kwargs)
         with self.assertLogs(level="INFO") as cm:
             converter.clear_target_directory()
         self.assertEqual(mock_unlink.call_count, 2)
@@ -124,12 +121,12 @@ class TestConvert(unittest.TestCase):
             {
                 "duration": 109,
                 "expected": 11,
-            }
+            },
         ]
         for media in segment_map:
-            with self.subTest(original=media['duration'], expected=media['expected']):
-                segment = self.converter.calculate_segments(media['duration'])
-                self.assertEqual(segment, media['expected'])
+            with self.subTest(original=media["duration"], expected=media["expected"]):
+                segment = self.converter.calculate_segments(media["duration"])
+                self.assertEqual(segment, media["expected"])
 
     def test_sanitize_file_name(self):
         fns = [
@@ -151,48 +148,41 @@ class TestConvert(unittest.TestCase):
         ]
         for original, expected in zip(fns, expected):
             with self.subTest(original=original, expected=expected):
-                cov = Converter(self.default_env, self.default_ns)
-                got = cov.sanitize_file_name(original)
+                got = self.converter.sanitize_file_name(original)
                 self.assertEqual(got, expected)
 
     def test_construct_command_from_template(self):
-        template = ["ffmpeg", "-i", "{filename}", "{param_1}",  "{param_2}"]
+        template = ["ffmpeg", "-i", "{filename}", "{param_1}", "{param_2}"]
         command_kwargs = {
             "filename": "/test/media/file.mp3",
             "param_1": "-my-opt-1",
             "param_2": "-my-opt-2",
         }
         command = self.converter.construct_command(template, **command_kwargs)
-        expected_command = ["ffmpeg", "-i", "/test/media/file.mp3", "-my-opt-1",  "-my-opt-2"]
+        expected_command = ["ffmpeg", "-i", "/test/media/file.mp3", "-my-opt-1", "-my-opt-2"]
         self.assertEqual(command, expected_command)
 
     def test_construct_command_from_template_can_handle_spaces(self):
-        template = ["ffmpeg", "-i", "{filename}", "{param_1}",  "{param_2}"]
+        template = ["ffmpeg", "-i", "{filename}", "{param_1}", "{param_2}"]
         command_kwargs = {
             "filename": "/test/media/my file.mp3",
             "param_1": "-my-opt-1",
             "param_2": "-my-opt-2",
         }
         command = self.converter.construct_command(template, **command_kwargs)
-        expected_command = ["ffmpeg", "-i", "/test/media/my file.mp3", "-my-opt-1",  "-my-opt-2"]
+        expected_command = ["ffmpeg", "-i", "/test/media/my file.mp3", "-my-opt-1", "-my-opt-2"]
         self.assertEqual(command, expected_command)
 
     def test_construct_command_from_template_can_handle_options_param(self):
         template = ["ffmpeg", "-i", "{filename}", "{opts}"]
-        command_kwargs = {
-            "filename": "/test/media/my_file.mp3",
-            "opts": DEFAULT_COPY_OPTS
-        }
+        command_kwargs = {"filename": "/test/media/my_file.mp3", "opts": DEFAULT_COPY_OPTS}
         command = self.converter.construct_command(template, **command_kwargs)
-        expected_command = ["ffmpeg", "-i", "/test/media/my_file.mp3", "-c",  "copy"]
+        expected_command = ["ffmpeg", "-i", "/test/media/my_file.mp3", "-c", "copy"]
         self.assertEqual(command, expected_command)
 
     def test_construct_command_from_template_raises_error_if_any_key_missing(self):
-        template = ["ffmpeg", "-i", "{filename}", "{param_1}",  "{param_2}"]
-        command_kwargs = {
-            "filename": "/test/media/file.mp3",
-            "param_2": "-my-opt-2"
-        }
+        template = ["ffmpeg", "-i", "{filename}", "{param_1}", "{param_2}"]
+        command_kwargs = {"filename": "/test/media/file.mp3", "param_2": "-my-opt-2"}
         with self.assertLogs(level="ERROR") as cm:
             with self.assertRaises(KeyError):
                 self.converter.construct_command(template, **command_kwargs)
@@ -207,22 +197,17 @@ class TestConvert(unittest.TestCase):
             "-i",
             fp.as_posix(),
             "-af",
-            f"loudnorm=I={self.converter.args.lufs}:TP=-1.5:LRA=11:print_format=json",
+            f"loudnorm=I={self.converter.lufs}:TP=-1.5:LRA=11:print_format=json",
             "-f",
             "null",
-            "-"
+            "-",
         ]
-        self.subprocess_run_patch.assert_called_once_with(
-            expected_args,
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        self.subprocess_run_patch.assert_called_once_with(expected_args, check=True, capture_output=True, text=True)
 
     def test_get_loudnorm_summary_returns_none_in_dry_run_mode(self):
         fp = Path("/home/user/Videos/my_video.mp4")
-        setattr(self.default_ns, "dry_run", True)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(dry_run=True)
+        converter = Converter(self.default_env, **kwargs)
         self.assertIsNone(converter.get_loudnorm_summary(fp))
 
     def test_extracting_audio_bitrate(self):
@@ -238,14 +223,9 @@ class TestConvert(unittest.TestCase):
             "stream=bit_rate",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            fp.as_posix()
+            fp.as_posix(),
         ]
-        self.subprocess_run_patch.assert_called_once_with(
-            expected_args,
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        self.subprocess_run_patch.assert_called_once_with(expected_args, check=True, capture_output=True, text=True)
 
     def test_extract_duration(self):
         fp = Path("/home/user/Videos/my_video.mp4")
@@ -258,20 +238,9 @@ class TestConvert(unittest.TestCase):
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            fp.as_posix()
+            fp.as_posix(),
         ]
-        self.subprocess_run_patch.assert_called_once_with(
-            expected_args,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
-    def test_extract_metadata_returns_none_in_dry_run_mode(self):
-        fp = Path("/home/user/Videos/my_video.mp4")
-        setattr(self.default_ns, "dry_run", True)
-        converter = Converter(self.default_env, self.default_ns)
-        self.assertIsNone(converter.extract_metadata(datapoint="audio_bitrate", file_object=fp))
+        self.subprocess_run_patch.assert_called_once_with(expected_args, check=True, capture_output=True, text=True)
 
     def test_get_new_file_name(self):
         fn_base = "my_track"
@@ -293,7 +262,7 @@ class TestConvert(unittest.TestCase):
             "output_lra": 4.40,
             "output_thresh": -27.58,
             "normalization_type": "dynamic",
-            "target_offset": -0.39
+            "target_offset": -0.39,
         }
         self.assertEqual(result, expected)
 
@@ -314,7 +283,7 @@ class TestConvert(unittest.TestCase):
         file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
         with self.assertLogs(level="INFO") as cm:
             self.converter.processing_audio(file_map=file_map)
-        self.assertTrue(file_map[stem]['done'])
+        self.assertTrue(file_map[stem]["done"])
         self.assertEqual(len(cm.records), 4)
         self.assertEqual(cm.records[0].message, f"Processing audio: {stem}")
         self.assertEqual(cm.records[1].message, f"Processing media: {stem}_000.mp4")
@@ -322,51 +291,73 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(cm.records[3].message, "Processing done")
 
     def test_processing_audio_loudnorm_summary(self):
-        setattr(self.default_ns, "check_loudness", True)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(check_loudness=True)
+        converter = Converter(self.default_env, **kwargs)
         stem = "my_media"
         file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
         self.subprocess_run_patch.return_value = CompletedProcessStub(stderr=self._get_example_output())
         converter.processing_audio(file_map=file_map)
         self.assertEqual(self.subprocess_run_patch.call_count, 2)
-        self.assertTrue(file_map['my_media']['done'])
+        self.assertTrue(file_map["my_media"]["done"])
 
     def test_processing_audio_normalize(self):
-        setattr(self.default_ns, "normalize", True)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(normalize=True)
+        converter = Converter(self.default_env, **kwargs)
         stem = "my_fav"
         file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
         converter.processing_audio(file_map=file_map)
         self.assertEqual(self.subprocess_run_patch.call_count, 2)
         expected_calls = [
-            call([
-                "ffmpeg", "-y", "-i",
-                f"{file_map[stem]['original_files'][0]}",
-                "-c:v", "copy", "-af",
-                "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-                "-c:a", "aac", "-b:a",
-                f"{file_map[stem]['audio_bitrate']}",
-                f"{file_map[stem]['new_files'][0]}",
-            ], check=True, capture_output=True, text=True),
-            call([
-                "ffmpeg", "-y", "-i",
-                f"{file_map[stem]['original_files'][1]}",
-                "-c:v", "copy", "-af",
-                "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-                "-c:a", "aac", "-b:a",
-                f"{file_map[stem]['audio_bitrate']}",
-                f"{file_map[stem]['new_files'][1]}",
-            ], check=True, capture_output=True, text=True)
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    f"{file_map[stem]['original_files'][0]}",
+                    "-c:v",
+                    "copy",
+                    "-af",
+                    "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    f"{file_map[stem]['audio_bitrate']}",
+                    f"{file_map[stem]['new_files'][0]}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    f"{file_map[stem]['original_files'][1]}",
+                    "-c:v",
+                    "copy",
+                    "-af",
+                    "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    f"{file_map[stem]['audio_bitrate']}",
+                    f"{file_map[stem]['new_files'][1]}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
         ]
         self.subprocess_run_patch.assert_has_calls(expected_calls)
-        self.assertTrue(file_map[stem]['done'])
+        self.assertTrue(file_map[stem]["done"])
 
     def test_processing_overlay_logs_start_and_end_of_processing(self):
         stem = "my_media"
         file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
         with self.assertLogs(level="INFO") as cm:
             self.converter.processing_overlay(file_map=file_map)
-        self.assertTrue(file_map[stem]['done'])
+        self.assertTrue(file_map[stem]["done"])
         self.assertEqual(len(cm.records), 4)
         self.assertEqual(cm.records[0].message, f"Processing overlay: {stem}")
         self.assertEqual(cm.records[1].message, f"Processing media: {stem}_000.mp4")
@@ -375,32 +366,50 @@ class TestConvert(unittest.TestCase):
 
     def test_processing_overlay(self):
         test_text = "let's overlay this"
-        setattr(self.default_ns, "text", test_text)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(text=test_text)
+        converter = Converter(self.default_env, **kwargs)
         stem = "my_fav"
         file_map: dict[str, FileBatchInfo] = self._get_file_batch_info_stub(stem, 2)
         converter.processing_overlay(file_map=file_map)
         self.assertEqual(self.subprocess_run_patch.call_count, 2)
         expected_calls = [
-            call([
-                "ffmpeg", "-i",
-                f"{file_map[stem]['original_files'][0]}",
-                "-vf",
-                f"drawtext=text='{test_text}':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
-                "-c:a", "copy",
-                f"{file_map[stem]['new_files'][0]}",
-            ], check=True, capture_output=True, text=True),
-            call([
-                "ffmpeg", "-i",
-                f"{file_map[stem]['original_files'][1]}",
-                "-vf",
-                f"drawtext=text='{test_text}':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
-                "-c:a", "copy",
-                f"{file_map[stem]['new_files'][1]}",
-            ], check=True, capture_output=True, text=True)
+            call(
+                [
+                    "ffmpeg",
+                    "-i",
+                    f"{file_map[stem]['original_files'][0]}",
+                    "-vf",
+                    f"drawtext=text='{
+                        test_text
+                    }':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
+                    "-c:a",
+                    "copy",
+                    f"{file_map[stem]['new_files'][0]}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
+            call(
+                [
+                    "ffmpeg",
+                    "-i",
+                    f"{file_map[stem]['original_files'][1]}",
+                    "-vf",
+                    f"drawtext=text='{
+                        test_text
+                    }':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
+                    "-c:a",
+                    "copy",
+                    f"{file_map[stem]['new_files'][1]}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
         ]
         self.subprocess_run_patch.assert_has_calls(expected_calls)
-        self.assertTrue(file_map[stem]['done'])
+        self.assertTrue(file_map[stem]["done"])
 
     def test_creating_file_cut_map(self):
         vid_1_duration = CompletedProcessStub(stdout="60.5")
@@ -414,32 +423,38 @@ class TestConvert(unittest.TestCase):
         self.assertIn("/home/Videos/my_vid_002.mp4", file_cut_map)
 
         media_data_1 = file_cut_map["/home/Videos/my_vid_001.mp4"]
-        self.assertEqual(media_data_1, {
-            'stem_index': 1,
-            'fn_base': Path('/home/user/Videos/done/my_vid-1'),
-            'duration': 60.5,
-            'segments': 6,
-            'done': False
-        })
+        self.assertEqual(
+            media_data_1,
+            {
+                "stem_index": 1,
+                "fn_base": Path("/home/user/Videos/done/my_vid-1"),
+                "duration": 60.5,
+                "segments": 6,
+                "done": False,
+            },
+        )
         media_data_2 = file_cut_map["/home/Videos/my_vid_002.mp4"]
-        self.assertEqual(media_data_2, {
-            'stem_index': 2,
-            'fn_base': Path('/home/user/Videos/done/my_vid-2'),
-            'duration': 70.5,
-            'segments': 7,
-            'done': False
-        })
+        self.assertEqual(
+            media_data_2,
+            {
+                "stem_index": 2,
+                "fn_base": Path("/home/user/Videos/done/my_vid-2"),
+                "duration": 70.5,
+                "segments": 7,
+                "done": False,
+            },
+        )
 
     def test_create_cuts_sets_status_done_and_logs_start_and_end_of_processing(self):
         stem = "my_media"
-        setattr(self.default_ns, "cuts", 90)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(segment_length=90)
+        converter = Converter(self.default_env, **kwargs)
         original_files, file_map = self._get_file_cut_info_stub(stem, 2)
         with self.assertLogs(level="INFO") as cm:
             converter.create_cuts(file_map=file_map)
         self.assertEqual(len(cm.records), 8)
-        self.assertTrue(file_map[original_files[0]]['done'])
-        self.assertTrue(file_map[original_files[1]]['done'])
+        self.assertTrue(file_map[original_files[0]]["done"])
+        self.assertTrue(file_map[original_files[1]]["done"])
         self.assertEqual(cm.records[0].message, f"Processing: {original_files[0]}")
         self.assertEqual(cm.records[1].message, "Cut #0 - current_ss: 0")
         self.assertEqual(cm.records[2].message, "Cut #1 - current_ss: 90")
@@ -450,8 +465,8 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(cm.records[7].message, "Processing done")
 
     def test_create_cuts_produces_required_segments_without_re_encoding(self):
-        setattr(self.default_ns, "cuts", 90)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(segment_length=90)
+        converter = Converter(self.default_env, **kwargs)
         original_files, file_map = self._get_file_cut_info_stub("my_vid", num=2)
         converter.create_cuts(file_map)
         expected_files = [
@@ -462,33 +477,84 @@ class TestConvert(unittest.TestCase):
         ]
         self.assertEqual(self.subprocess_run_patch.call_count, 4)
         expected_calls = [
-            call([
-                "ffmpeg", "-y", "-ss", "0", "-t", "90",
-                "-i", original_files[0],
-                "-c", "copy", expected_files[0],
-            ], check=True, capture_output=True, text=True),
-            call([
-                "ffmpeg", "-y", "-ss", "90", "-t", "90",
-                "-i", original_files[0],
-                "-c", "copy", expected_files[1],
-            ], check=True, capture_output=True, text=True),
-            call([
-                "ffmpeg", "-y", "-ss", "0", "-t", "90",
-                "-i", original_files[1],
-                "-c", "copy", expected_files[2],
-            ], check=True, capture_output=True, text=True),
-            call([
-                "ffmpeg", "-y", "-ss", "90", "-t", "90",
-                "-i", original_files[1],
-                "-c", "copy", expected_files[3],
-            ], check=True, capture_output=True, text=True),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    "0",
+                    "-t",
+                    "90",
+                    "-i",
+                    original_files[0],
+                    "-c",
+                    "copy",
+                    expected_files[0],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    "90",
+                    "-t",
+                    "90",
+                    "-i",
+                    original_files[0],
+                    "-c",
+                    "copy",
+                    expected_files[1],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    "0",
+                    "-t",
+                    "90",
+                    "-i",
+                    original_files[1],
+                    "-c",
+                    "copy",
+                    expected_files[2],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    "90",
+                    "-t",
+                    "90",
+                    "-i",
+                    original_files[1],
+                    "-c",
+                    "copy",
+                    expected_files[3],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
         ]
         self.subprocess_run_patch.assert_has_calls(expected_calls)
 
     def test_create_cuts_produces_required_segments_with_re_encoding(self):
-        setattr(self.default_ns, "cuts", 90)
-        setattr(self.default_ns, "re_encode", True)
-        converter = Converter(self.default_env, self.default_ns)
+        kwargs = self._get_kwargs(segment_length=90, re_encode=True)
+        converter = Converter(self.default_env, **kwargs)
         original_files, file_map = self._get_file_cut_info_stub("my_vid", num=1)
         converter.create_cuts(file_map)
         expected_files = [
@@ -497,30 +563,86 @@ class TestConvert(unittest.TestCase):
         ]
         self.assertEqual(self.subprocess_run_patch.call_count, 2)
         expected_calls = [
-            call([
-                "ffmpeg", "-y", "-ss", "0", "-t", "90",
-                "-i", original_files[0],
-                "-vf", "scale=1280:720,fps=30",
-                "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-                "-ac", "2", "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-                expected_files[0],
-            ], check=True, capture_output=True, text=True),
-            call([
-                "ffmpeg", "-y", "-ss", "90", "-t", "90",
-                "-i", original_files[0],
-                "-vf", "scale=1280:720,fps=30",
-                "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-                "-ac", "2", "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
-                expected_files[1]
-            ], check=True, capture_output=True, text=True),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    "0",
+                    "-t",
+                    "90",
+                    "-i",
+                    original_files[0],
+                    "-vf",
+                    "scale=1280:720,fps=30",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-af",
+                    "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                    expected_files[0],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
+            call(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    "90",
+                    "-t",
+                    "90",
+                    "-i",
+                    original_files[0],
+                    "-vf",
+                    "scale=1280:720,fps=30",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-af",
+                    "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+                    expected_files[1],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ),
         ]
         self.subprocess_run_patch.assert_has_calls(expected_calls)
+
+    def test_run_command_logs_ffmpeg_command_in_dry_run_mode_and_return_false(self):
+        kwargs = self._get_kwargs(dry_run=True)
+        converter = Converter(self.default_env, **kwargs)
+        command = ("ffmpeg", "some", "other", "params")
+        with self.assertLogs(level="INFO") as cm:
+            result = converter.run_command(command)
+        self.assertEqual(cm.records[0].message, f"Command: {command}")
+        self.assertFalse(result)
+
+    def test_run_command_runs_command_for_ffprobe_regardless_of_dry_run(self):
+        kwargs = self._get_kwargs(dry_run=True)
+        converter = Converter(self.default_env, **kwargs)
+        command = ("ffprobe", "some", "other", "params")
+        converter.run_command(command=command)
+        self.subprocess_run_patch.assert_called_once_with(command, check=True, capture_output=True, text=True)
 
     def test_run_command_raises_when_command_results_in_called_process_error(self):
         command = ["testing", "error", "handling"]
         self.subprocess_run_patch.side_effect = subprocess.CalledProcessError(1, cmd=command, stderr="simulated error")
         with self.assertRaises(ConverterError) as cm:
-            self.converter._run_command(command)
+            self.converter.run_command(command)
         self.assertEqual(str(cm.exception), f"Error running: {command}: simulated error")
 
     @staticmethod
@@ -534,7 +656,7 @@ class TestConvert(unittest.TestCase):
                 "original_files": original_files,
                 "new_files": new_files,
                 "target_lufs": -16,
-                "done": False
+                "done": False,
             }
         }
 
@@ -547,7 +669,7 @@ class TestConvert(unittest.TestCase):
                 "stem_index": i,
                 "fn_base": Path(f"/home/Videos/{stem}-{i:03d}"),
                 "duration": 180,
-                "segments": 2
+                "segments": 2,
             }
 
         return original_files, file_map
@@ -558,7 +680,7 @@ class TestConvert(unittest.TestCase):
 
     @staticmethod
     def _get_example_output():
-        output = """
+        output = """\
 ffmpeg version n8.0.1 Copyright (c) 2000-2025 the FFmpeg developers
 built with gcc 15.2.1 (GCC) 20251112
 configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan
@@ -629,5 +751,5 @@ frame=  170 fps=0.0 q=-0.0 size=N/A time=00:00:03.01 bitrate=N/A speed=6.04x ela
 }
 [out#0/null @ 0x55ae5a9c7f80] video:84KiB audio:5120KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
 frame=  206 fps=0.0 q=-0.0 Lsize=N/A time=00:00:06.87 bitrate=N/A speed=  11x elapsed=0:00:00.62
-"""
+"""  # noqa: E501
         return output

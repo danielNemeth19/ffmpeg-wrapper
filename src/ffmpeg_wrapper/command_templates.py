@@ -32,7 +32,7 @@ DEFAULT_OVERLAY_TEMPLATE = (
     "drawtext=text='{text}':fontcolor=white:fontsize=120:bordercolor=black:borderw=2:x=(w-text_w)/2:y=(h-text_h)/2",
     "-c:a",
     "copy",
-    "{outfile}"
+    "{outfile}",
 )
 
 
@@ -44,7 +44,7 @@ LOUDNESS_ANALYSIS_TEMPLATE = (
     "loudnorm=I={lufs}:TP=-1.5:LRA=11:print_format=json",
     "-f",
     "null",
-    "-"
+    "-",
 )
 
 
@@ -71,24 +71,31 @@ CREATE_CUTS_TEMPLATE = (
     "-ss",
     "{current_ss}",
     "-t",
-    "{cuts}",
+    "{segment_length}",
     "-i",
     "{filename}",
     "{opts}",
-    "{outfile}"
+    "{outfile}",
 )
 
 
 DEFAULT_RE_ENCODE_OPTS = (
-    "-vf", "scale=1280:720,fps=30",
-    "-c:a", "aac",
-    "-b:a", "192k",
-    "-ar", "48000",
-    "-ac", "2",
-    "-af", "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
+    "-vf",
+    "scale=1280:720,fps=30",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "48000",
+    "-ac",
+    "2",
+    "-af",
+    "loudnorm=I=-16:TP=-1.5:LRA=5:linear=true",
 )
 
 
 DEFAULT_COPY_OPTS = (
-    "-c", "copy",
+    "-c",
+    "copy",
 )
