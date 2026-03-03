@@ -1,12 +1,48 @@
 
 # Video Normalization and Processing with FFmpeg
 
-This tool automates batch processing of MP4 files using FFmpeg, including loudness normalization, overlaying text,
-segment cutting, and optional re-encoding.
-It is configurable via command-line arguments and environment variables.
+A small Python CLI tool to batch-process `.mp4` files with FFmpeg/FFprobe.
+
+It supports:
+
+- Loudness analysis (LUFS)
+- Loudness normalization
+- Text overlay
+- Video cutting into fixed-length segments
+- Optional re-encode for cuts
+- Dry-run mode to preview commands
 
 > **Note:** This is a naive wrapper script intended for simple batch workflows.  
 > For advanced or production-grade video/audio processing, consider established packages such as [ffmpeg-python](https://github.com/kkroening/ffmpeg-python), [moviepy](https://zulko.github.io/moviepy/), or [PyAV](https://github.com/PyAV-Org/PyAV).
+
+## Requirements
+
+- Linux machine
+- Python `>=3.14` (as defined in `pyproject.toml`)
+- [`uv`](https://docs.astral.sh/uv/)
+- `ffmpeg` + `ffprobe` available in `PATH`
+
+## Install / setup (uv)
+
+From project root:
+
+```bash
+uv sync
+```
+
+This installs runtime + project dependencies from `pyproject.toml`.
+
+## Configuration
+
+Create a `.env` file in the project root:
+
+```env
+SOURCE=/absolute/path/to/source
+TARGET=/absolute/path/to/target
+```
+
+- `SOURCE`: input folder with `.mp4` files
+- `TARGET`: output folder (created if missing)
 
 ## Usage
 If your environment is activated and `ffmpeg_wrapper` is installed as a CLI script, you can run:
@@ -15,60 +51,70 @@ If your environment is activated and `ffmpeg_wrapper` is installed as a CLI scri
 ffmpeg_wrapper [options]
 ```
 
-## Features
+### CLI options
 
-- **Batch loudness normalization** to target LUFS
-- **Cut videos into segments** of specified length
-- **Re-encode video and audio** to standard formats
-- **Dry-run mode** to preview commands without execution
-- **Clear target directory** before processing
-- **Overlay text** on videos
+- `-l, --lufs` (float, default: `-16`)
+  Target integrated loudness.
+- `-p, --pattern` (string)
+  Filename substring filter (`*{pattern}*.mp4`).
+- `-cl, --check-loudness`
+  Analyze loudness only.
+- `-n, --normalize`
+  Normalize audio loudness.
+- `-sl, --segment-length` (int)
+  Split each video into N-second segments.
+- `-re, --re-encode`
+  Re-encode cuts with default options.
+- `-t, --text` (string)
+  Draw centered text overlay.
+- `-cf, --clear-first`
+  Clear matching files in target first.
+- `-dr, --dry-run`
+  Print FFmpeg commands without executing them (FFprobe still executes).
 
-### Options
+## Examples
 
-- `-l, --lufs FLOAT`  
-  Target integrated loudness in LUFS (default: -16)
-- `-p, --pattern STR`  
-  Pattern to match in MP4 filenames (default: all `.mp4`)
-- `-cl, --check-loudness`  
-  Check current loudness levels
-- `-n, --normalize`  
-  Normalize loudness (re-encode audio)
-- `-sl, --segment-length INT`  
-  Split each video into segments of specified length (seconds)
-- `-re, --re-encode`  
-  Re-encode video and audio streams to standard settings
-- `-t, --text STR`  
-  Overlay text on video
-- `-cf, --clear-first`  
-  Clear target folder before processing
-- `-dr, --dry-run`  
-  Print ffmpeg commands without executing
+Check loudness:
 
-### Example: Normalize and Overlay Text
-
-```sh
-python -m ffmpeg_wrapper.conv -n -t "Sample Text"
+```bash
+uv run ffmpeg_wrapper -cl
 ```
 
-### Example: Cut Videos into 30s Segments and Re-encode
+Normalize to -16 LUFS:
 
-```sh
-python -m ffmpeg_wrapper.conv -sl 30 -re
+```bash
+uv run ffmpeg_wrapper -n -l -16
 ```
 
-### Example: Check Loudness Only
+Normalize only files matching pattern:
 
-```sh
-python -m ffmpeg_wrapper.conv -cl
+```bash
+uv run ffmpeg_wrapper -n -p session1
 ```
 
-## Environment Variables
+Add overlay text:
 
-Set these in a `.env` file or your environment:
+```bash
+uv run ffmpeg_wrapper -t "DRAFT"
+```
 
-- `SOURCE` — Path to source directory with MP4 files
-- `TARGET` — Path to target output directory
+Cut into 60-second segments:
+
+```bash
+uv run ffmpeg_wrapper -sl 60
+```
+
+Cut into 60-second segments with re-encode:
+
+```bash
+uv run ffmpeg_wrapper -sl 60 -re
+```
+
+Dry run:
+
+```bash
+uv run ffmpeg_wrapper -n -sl 60 -dr
+```
 
 ## FFmpeg Command Reference
 
