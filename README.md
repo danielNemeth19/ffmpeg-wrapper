@@ -45,10 +45,10 @@ TARGET=/absolute/path/to/target
 - `TARGET`: output folder (created if missing)
 
 ## Usage
-If your environment is activated and `ffmpeg_wrapper` is installed as a CLI script, you can run:
+If your environment is activated and `pyffmpeg_wrapper` is installed as a CLI script, you can run:
 
 ```sh
-ffmpeg_wrapper [options]
+pyffmpeg_wrapper [options]
 ```
 
 ### CLI options
@@ -77,43 +77,43 @@ ffmpeg_wrapper [options]
 Check loudness:
 
 ```bash
-uv run ffmpeg_wrapper -cl
+uv run pyffmpeg_wrapper -cl
 ```
 
 Normalize to -16 LUFS:
 
 ```bash
-uv run ffmpeg_wrapper -n -l -16
+uv run pyffmpeg_wrapper -n -l -16
 ```
 
 Normalize only files matching pattern:
 
 ```bash
-uv run ffmpeg_wrapper -n -p session1
+uv run pyffmpeg_wrapper -n -p session1
 ```
 
 Add overlay text:
 
 ```bash
-uv run ffmpeg_wrapper -t "DRAFT"
+uv run pyffmpeg_wrapper -t "DRAFT"
 ```
 
 Cut into 60-second segments:
 
 ```bash
-uv run ffmpeg_wrapper -sl 60
+uv run pyffmpeg_wrapper -sl 60
 ```
 
 Cut into 60-second segments with re-encode:
 
 ```bash
-uv run ffmpeg_wrapper -sl 60 -re
+uv run pyffmpeg_wrapper -sl 60 -re
 ```
 
 Dry run:
 
 ```bash
-uv run ffmpeg_wrapper -n -sl 60 -dr
+uv run pyffmpeg_wrapper -n -sl 60 -dr
 ```
 
 ## FFmpeg Command Reference

@@ -1,10 +1,10 @@
 [project]
-name = "ffmpeg-wrapper"
-version = "0.1.0"
+name = "pyffmpeg-wrapper"
+version = "0.2.0"
 authors = [{ name = "Daniel Nemeth", email = "daniel.nemeth83@yahoo.com" }]
-description = "Add your description here"
+description = "A Python CLI tool for batch-processing MP4 videos with FFmpeg and FFprobe."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.2.1",
 ]
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [project.scripts]
-ffmpeg_wrapper = "ffmpeg_wrapper.conv:main"
+pyffmpeg_wrapper = "pyffmpeg_wrapper.conv:main"
 
 [build-system]
 requires = ["uv_build>=0.10.5,<0.11.0"]
@@ -31,7 +31,7 @@ src-layout = true
 package = true
 
 [tool.coverage.run]
-source = ["ffmpeg_wrapper"]
+source = ["pyffmpeg_wrapper"]
 branch = true
 omit = [
     "tests/*",

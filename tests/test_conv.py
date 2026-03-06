@@ -4,8 +4,8 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import call, patch
 
-from ffmpeg_wrapper import Converter, ConverterError, FileBatchInfo
-from ffmpeg_wrapper.command_templates import DEFAULT_COPY_OPTS
+from pyffmpeg_wrapper import Converter, ConverterError, FileBatchInfo
+from pyffmpeg_wrapper.command_templates import DEFAULT_COPY_OPTS
 
 
 class CompletedProcessStub:
